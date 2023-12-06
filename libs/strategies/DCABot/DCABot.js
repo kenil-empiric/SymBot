@@ -37,6 +37,17 @@ let shareData;
 
 let usdtBal;
 
+// for (const exchangeId of ccxt.exchanges) {
+//     try {
+//         const exchange = new ccxt[exchangeId]()
+//         if (exchange.urls.test) {
+//             console.log (exchange.id, 'has a testnet')
+//         }
+//     } catch (e) {
+//     }
+// }
+
+
 async function start(dataObj) {
   let startBot = dataObj["create"];
 
@@ -191,6 +202,7 @@ async function start(dataObj) {
       askPrice = firstOrderPrice;
     }
     const orders = [];
+    // askPrice=2201.48;
 
     if (startBot && isActive && !checkActivePairOverride) {
       dealIdMain = isActive.dealId;
@@ -280,12 +292,12 @@ async function start(dataObj) {
             qty: firstOrderSize,
             amount: totalAmount,
             qtySum: firstOrderSize,
-            sum: amount,
+            sum: totalAmount,
             type: "MARKET",
             filled: 0,
           });
 
-          lastDcaOrderAmount = amount;
+          lastDcaOrderAmount = totalAmount;
           lastDcaOrderSize = firstOrderSize;
           lastDcaOrderSum = amount;
           lastDcaOrderQtySum = firstOrderSize;
@@ -356,7 +368,7 @@ async function start(dataObj) {
             price = await filterPrice(exchange, pair, price);
 
             let amount = lastDcaOrderAmount * config.dcaOrderSizeMultiplier;
-            amount = await filterAmount(exchange, pair, amount);
+            amount = await filterPrice(exchange, pair, amount);
             let exchangeFee = (amount / 100) * Number(config.exchangeFee);
             let dcaOrderSize = amount / price;
             dcaOrderSize = await filterAmount(exchange, pair, dcaOrderSize);
@@ -576,12 +588,12 @@ async function start(dataObj) {
             qty: firstOrderSize,
             amount: totalAmount,
             qtySum: firstOrderSize,
-            sum: amount,
+            sum: totalAmount,
             type: "LIMIT",
             filled: 0,
           });
 
-          lastDcaOrderAmount = amount;
+          lastDcaOrderAmount = totalAmount;
           lastDcaOrderSize = firstOrderSize;
           lastDcaOrderSum = amount;
           lastDcaOrderQtySum = firstOrderSize;
@@ -660,7 +672,7 @@ async function start(dataObj) {
             price = await filterPrice(exchange, pair, price);
 
             let amount = lastDcaOrderAmount * config.dcaOrderSizeMultiplier;
-            amount = await filterAmount(exchange, pair, amount);
+            amount = await filterPrice(exchange, pair, amount);
             let exchangeFee = (amount / 100) * Number(config.exchangeFee);
             let dcaOrderSize = amount / price;
             dcaOrderSize = await filterAmount(exchange, pair, dcaOrderSize);
@@ -1005,7 +1017,6 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
     Common.logger(
       colors.red.bold(shareData.appData.database_error + " - Not processing")
     );
-
     return { success: false, finished: false };
   }
 
@@ -1144,7 +1155,6 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 
               if (statusObj["success"]) {
                 await deleteDeal(dealId);
-
                 finished = true;
               }
 
@@ -1692,44 +1702,44 @@ const getSymbol = async (exchange, pair) => {
 
       finished = true;
     } catch (e) {
-      // symbolError = e;
-      //
-      // if (typeof symbolError != 'string') {
-      //
-      // 	let msg = '';
-      //
-      // 	if (symbolError.message != undefined && symbolError.message != null) {
-      //
-      // 		msg = ' ' + symbolError.message;
-      // 	}
-      //
-      // 	symbolError = JSON.stringify(symbolError) + msg;
-      // }
-      //
-      // symbolError = 'Get symbol ' + pair + ' error: ' + symbolError;
-      //
-      // Common.logger(colors.bgRed.bold.italic(symbolError));
-      //
-      // if (e instanceof ccxt.RateLimitExceeded && count < maxTries) {
-      //
-      // 	// Delay and try again
-      // 	await Common.delay(1000 + (Math.random() * 100));
-      // }
-      // else if (e instanceof ccxt.ExchangeNotAvailable) {
-      //
-      // 	finished = true;
-      // }
-      // else if (e instanceof ccxt.BadSymbol) {
-      //
-      // 	symbolInvalid = true;
-      //
-      // 	finished = true;
-      // }
-      // else {
-      //
-      // 	finished = true;
-      // }
-      //
+      symbolError = e;
+      
+      if (typeof symbolError != 'string') {
+      
+      	let msg = '';
+      
+      	if (symbolError.message != undefined && symbolError.message != null) {
+      
+      		msg = ' ' + symbolError.message;
+      	}
+      
+      	symbolError = JSON.stringify(symbolError) + msg;
+      }
+      
+      symbolError = 'Get symbol ' + pair + ' error: ' + symbolError;
+      
+      Common.logger(colors.bgRed.bold.italic(symbolError));
+      
+      if (e instanceof ccxt.RateLimitExceeded && count < maxTries) {
+      
+      	// Delay and try again
+      	await Common.delay(1000 + (Math.random() * 100));
+      }
+      else if (e instanceof ccxt.ExchangeNotAvailable) {
+      
+      	finished = true;
+      }
+      else if (e instanceof ccxt.BadSymbol) {
+      
+      	symbolInvalid = true;
+      
+      	finished = true;
+      }
+      else {
+      
+      	finished = true;
+      }
+      
 
       finished = true;
       count++;
@@ -1848,7 +1858,7 @@ async function openWatchDog(orderId, price, pair, exchange) {
       let inc = 0;
 
       const order = await exchange.fetchOrder(orderId, pair);
-      // console.log(`Order Status ${inc} for Order ID ${orderId} & for the pair ${pair} at${price}: ${order.status}`);
+      console.log(`Order Status ${inc} for Order ID ${orderId} & for the pair ${pair} at${price}: ${order.status}`);
 
       // Check if the order is closed or filled
       if (order.status === "closed" || order.status === "filled") {
@@ -1860,6 +1870,7 @@ async function openWatchDog(orderId, price, pair, exchange) {
     console.error("Error tracking order status:", error.message);
   }
 }
+
 // BuyOrder function for market orders
 const buyOrder = async (exchange, dealId, pair, qty, price) => {
   let msg;
@@ -2080,7 +2091,7 @@ async function connectExchange(configObj) {
       exchange = shareData.appData.exchanges[config.exchange];
     } else {
       if (config.exchange == "binance" || config.exchange == "BINANCE") {
-        exchange = new ccxt.pro[config.exchange]({
+        exchange = new ccxt[config.exchange]({
           enableRateLimit: true,
           apiKey: config.apiKey,
           secret: config.apiSecret,
@@ -2088,9 +2099,27 @@ async function connectExchange(configObj) {
           password: config.apiPassword,
           options: options,
         });
+        
         exchange.setSandboxMode(true); //it will activate Test modes
         await exchange.loadMarkets();
-      } else {
+      } 
+      else if(config.exchange == "bybit" || config.exchange == "BYBIT"){
+        exchange = new ccxt[config.exchange]({
+          enableRateLimit: true,
+          apiKey: config.apiKey,
+          secret: config.apiSecret,
+          passphrase: config.apiPassphrase,
+          password: config.apiPassword,
+          options: options,
+        });
+        
+        exchange.setSandboxMode(true); //it will activate Test modes
+        const ex= await exchange.fetchBalance()
+        const usdt=await  ex.BTC
+        await exchange.loadMarkets();
+        
+      }else if(config.exchange == "bitmex" || config.exchange == "BITMEX"){
+      
         exchange = new ccxt.pro[config.exchange]({
           enableRateLimit: true,
           apiKey: config.apiKey,
@@ -2099,12 +2128,45 @@ async function connectExchange(configObj) {
           password: config.apiPassword,
           options: options,
         });
+        
+        exchange.setSandboxMode(true); //it will activate Test modes
+        const ex= await exchange.fetchBalance()
+        const BTC=await  ex.BTC
+        const usdt=await ex.USDT
+        // console.log("----------------2",BTC,usdt);
+        await exchange.loadMarkets();
+      }
+      else {
+        exchange = new ccxt.pro[config.exchange]({
+          enableRateLimit: true,
+          apiKey: config.apiKey,
+          secret: config.apiSecret,
+          passphrase: config.apiPassphrase,
+          password: config.apiPassword,
+          options: options,
+        });
+
+        // exchange = new ccxt.pro[config.exchange]({
+        //   enableRateLimit: true,
+        //   apiKey: config.apiKey,
+        //   secret: config.apiSecret,
+        //   passphrase: config.apiPassphrase,
+        //   password: config.apiPassword,
+        //   options: options,
+        // });
+        
+        // exchange.setSandboxMode(true); //it will activate Test modes
+        // const ex= await exchange.fetchBalance()
+        // const BTC=await  ex.BTC
+        // const usdt=await ex.USDT
+        // console.log("----------------2",BTC,usdt);
+        // await exchange.loadMarkets();
       }
       shareData.appData.exchanges[config.exchange] = exchange;
     }
   } catch (e) {
     let msg = "Connect exchange error: " + e;
-
+    // console.log(msg);
     Common.logger(msg);
 
     Common.sendNotification({
@@ -2248,6 +2310,7 @@ async function deleteDeal(dealId) {
   let dealData;
   let success = true;
 
+  // console.log("enter Deletedeal function");
   try {
     dealData = await Deals.deleteOne({
       dealId: dealId,

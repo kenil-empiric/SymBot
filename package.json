@@ -13,7 +13,7 @@
     "ansi-to-html": "^0.7.2",
     "async": "^3.2.5",
     "body-parser": "^1.20.2",
-    "ccxt": "^4.1.56",
+    "ccxt": "^4.1.45",
     "check-dependencies": "^2.0.0",
     "colors": "^1.4.0",
     "compression": "^1.7.4",
