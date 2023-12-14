@@ -82,7 +82,6 @@ const data={
 
 async function start(dataObj) {
   let startBot = dataObj["create"];
-  console.log("dataObj____________________________________enter");
   let data = await initBot({
     create: startBot,
     config: JSON.parse(JSON.stringify(dataObj["config"])),
@@ -92,8 +91,6 @@ async function start(dataObj) {
 
   delete data["dealResumeId"];
   delete data["firstOrderPrice"];
-  console.log("dataObj___________________1_________________enter");
-
   const config = Object.freeze(JSON.parse(JSON.stringify(data)));
 
   let dealIdMain;
@@ -224,7 +221,6 @@ async function start(dataObj) {
     }
 
     let askPrice = symbol.ask;
-    console.log("dataObj_______________2_____________________enter");
 
     // Override price if passed in
     if (
@@ -280,7 +276,6 @@ async function start(dataObj) {
       }
       if (config.firstOrderType.toUpperCase() == "MARKET") {
         //first order market
-        console.log("---------enter -------MARKET-------------");
         if (shareData.appData.verboseLog) {
           Common.logger(
             colors.bgGreen("Calculating orders for " + pair + "...")
@@ -308,7 +303,6 @@ async function start(dataObj) {
           let exchangeFee = (amount / 100) * Number(config.exchangeFee);
 
           // amount = await filterPrice(exchange, pair, amount + exchangeFee);
-          console.log("dataObj___________________3_________________enter");
 
           let targetPrice = Percentage.addPerc(
             price,
@@ -376,7 +370,6 @@ async function start(dataObj) {
             );
 
             targetPrice = await filterPrice(exchange, pair, targetPrice);
-            console.log("dataObj________________4____________________enter");
 
             orders.push({
               orderNo: i + 2,
@@ -431,7 +424,6 @@ async function start(dataObj) {
             );
 
             targetPrice = await filterPrice(exchange, pair, targetPrice);
-            console.log("dataObj_________________5___________________enter");
 
             orders.push({
               orderNo: i + 2,
@@ -495,7 +487,6 @@ async function start(dataObj) {
             );
           }
         }
-        console.log("dataObj_________________6___________________enter");
 
         if (shareData.appData.verboseLog) {
           Common.logger(colors.bgWhite("Your Balance: $" + wallet));
@@ -560,7 +551,6 @@ async function start(dataObj) {
               await Common.delay(1000);
             }
           }
-          console.log("dataObj_______________7_____________________enter");
 
           if (followFinished) {
             //break;
@@ -578,7 +568,6 @@ async function start(dataObj) {
       //if body end here
       else {
         //first order limit
-        console.log("---------enter -------limit-------------");
 
         if (shareData.appData.verboseLog) {
           Common.logger(colors.bgGreen("Calculating orders..."));
@@ -630,7 +619,6 @@ async function start(dataObj) {
             type: "LIMIT",
             filled: 0,
           });
-          console.log("dataObj________________l1____________________enter");
 
           lastDcaOrderAmount = totalAmount;
           lastDcaOrderSize = firstOrderSize;
@@ -660,7 +648,6 @@ async function start(dataObj) {
             //   pair,
             //   dcaOrderAmount + exchangeFee
             // );
-            console.log("dataObj________________l2____________________enter");
 
             let dcaOrderSum =
               parseFloat(dcaOrderAmount) + parseFloat(lastDcaOrderAmount);
@@ -729,7 +716,6 @@ async function start(dataObj) {
             lastDcaOrderSum = dcaOrderSum;
             lastDcaOrderPrice = price;
             lastDcaOrderQtySum = dcaOrderQtySum;
-            console.log("dataObj________________l3____________________enter");
 
             const average = await filterPrice(
               exchange,
@@ -804,7 +790,6 @@ async function start(dataObj) {
             );
           }
         }
-        console.log("dataObj________________l4____________________enter");
 
         if (shareData.appData.verboseLog) {
           Common.logger(colors.bgWhite("Your Balance: $" + wallet));
@@ -838,7 +823,6 @@ async function start(dataObj) {
             },
           };
         }
-        console.log("dataObj________________l5____________________enter");
 
         if (startBot) {
           const dealObj = await createDeal(
@@ -865,7 +849,6 @@ async function start(dataObj) {
 
             followSuccess = followRes["success"];
             followFinished = followRes["finished"];
-            console.log("dataObj________________l6____________________enter");
 
             if (!followSuccess) {
               await Common.delay(1000);
@@ -885,7 +868,6 @@ async function start(dataObj) {
     }
   } catch (e) {
     Common.logger(e);
-    console.log(e);
     //(e);
   }
 
@@ -1170,7 +1152,6 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
       let targetPrice = 0;
 
       let orders = deal.orders;
-
       if (deal.isStart == 0) {
         const baseOrder = deal.orders[0];
         targetPrice = baseOrder.target;
@@ -1179,7 +1160,6 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 
         if (baseOrder.type == "MARKET") {
           //Send market order to exchange
-
           if (!config.sandBox) {
             const priceFiltered = await filterPrice(exchange, pair, price);
             const buy = await buyOrder(
@@ -1340,6 +1320,11 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
                   price +
                   ""
               );
+              console.log("DCA BOT will start when price react " +
+              baseOrder.price +
+              ", now price is " +
+              price +
+              "");
             }
           }
         }
@@ -2120,7 +2105,6 @@ async function connectExchange(configObj) {
 
   try {
 
-    console.log("config exchange", config.exchange);
     if (
       config.exchangeOptions != undefined &&
       config.exchangeOptions != null &&
@@ -2147,6 +2131,8 @@ async function connectExchange(configObj) {
         
         exchange.setSandboxMode(true); //it will activate Test modes
         await exchange.loadMarkets();
+        const balance= await exchange.fetchBalance();
+        console.log("balance is:", balance.USDT)
       } 
       else if(config.exchange == "bybit" || config.exchange == "BYBIT"){
         exchange = new ccxt[config.exchange]({
@@ -2166,7 +2152,6 @@ async function connectExchange(configObj) {
       }
 
       else if(config.exchange == "okx" || config.exchange == "OKX"){
-        console.log("in okx")
         
         // exchange = new ccxt[config.exchange]({
         //   enableRateLimit: true,
@@ -2192,19 +2177,13 @@ async function connectExchange(configObj) {
         exchange.setSandboxMode(true);
 
         // console.log("exchange", exchange);
-        
+
+       
+        await exchange.loadMarkets();
+        exchange.setSandboxMode(true); //it will activate Test modes
         const balance= await exchange.fetchBalance();
         console.log("balance is:", balance.USDT);
-        await exchange.loadMarkets();
-        
-
-        exchange.setSandboxMode(true); //it will activate Test modes
-        // const usdt=await  balance.BTC;
-        console.log("--------");
-        const symbols = await exchange.getSymbol();
-        
-        console.log("sym", symbols);
-        // console.log("balance is", balance);
+      
       }
       
       else if(config.exchange == "bitmex" || config.exchange == "BITMEX"){
@@ -2399,7 +2378,6 @@ async function deleteDeal(dealId) {
   let dealData;
   let success = true;
 
-  // console.log("enter Deletedeal function");
   try {
     dealData = await Deals.deleteOne({
       dealId: dealId,
@@ -3611,13 +3589,6 @@ async function initApp() {
 
   startSignals();
 }
-
-// async function test() {
-//   console.log("--------------------------------------------------------------");
-//   const logget=await start({ create: false, config: data})
-//   console.log("logget",logget);
-// }
-// test() 
 
 module.exports = {
   colors,

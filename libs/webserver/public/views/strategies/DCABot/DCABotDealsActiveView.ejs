@@ -188,7 +188,6 @@
 	function dealUpdate(dealId, data) {
 
 		$('#spinner-overlay').fadeIn(100);
-		console.log("data",data);
 		$.ajax({
 					type: 'POST',
 					url: '/api/deals/' + dealId + '/update_deal',
