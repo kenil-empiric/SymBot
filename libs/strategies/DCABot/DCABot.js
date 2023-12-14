@@ -581,7 +581,7 @@ async function start(dataObj) {
         console.log("---------enter -------limit-------------");
 
         if (shareData.appData.verboseLog) {
-          Common.logger(colors.bgGreen("Calculating orders..."));
+          Common.logger(colors.bgGreen("Calculating orders..."))
         }
 
         //await Common.delay(1000);
