@@ -450,8 +450,8 @@ async function apiUpdateDeal(req, res) {
   let dealLastUpdate = false;
 
   let content;
-
   const body = req.body;
+  console.log("apiupdate deal function",body);
   const dealId = req.params.dealId;
 
   let dealLast = body.dealLast;
@@ -486,6 +486,8 @@ async function apiUpdateDeal(req, res) {
       delete config["botId"];
       delete config["botName"];
 
+
+      
       const ordersOrig = dealData["orders"];
       const price = ordersOrig[0]["price"];
 
@@ -525,7 +527,7 @@ async function apiUpdateDeal(req, res) {
             (filledOrders.length - 1);
         }
       }
-
+   
       // Override take profit if set
       if (dcaTakeProfitPercent != undefined && dcaTakeProfitPercent != null) {
         if (dcaTakeProfitPercent != config["dcaTakeProfitPercent"]) {
@@ -547,6 +549,7 @@ async function apiUpdateDeal(req, res) {
         if (isUpdate) {
           // Get newly calculated order steps if update required
           data = await calculateOrders(config);
+          console.log(data);
         }
 
         // Remove and replace config data
@@ -557,9 +560,13 @@ async function apiUpdateDeal(req, res) {
         config["botId"] = configOrig["botId"];
         config["botName"] = configOrig["botName"];
 
+        console.log("data:", data);
+        console.log("data['orders']:", data["orders"]);
+
         // Only calculate if orders or tp were set
-        if (data && data["orders"]["success"]) {
-          let orderHeaders = data["orders"]["data"]["orders"]["headers"];
+        if (data ) {
+          console.log("-------------------enter");
+          // let orderHeaders = data["orders"]["data"]["orders"]["headers"];
           let orderSteps = data["orders"]["data"]["orders"]["steps"];
           let orderContent = data["orders"]["data"]["content"];
 
@@ -569,6 +576,7 @@ async function apiUpdateDeal(req, res) {
             orig: [],
             new: orderSteps,
           });
+          console.log("ordersNew=>>>>>>>>>>",ordersNew);
           let ordersValidate = await shareData.DCABot.ordersValid(
             dealData["pair"],
             ordersNew
@@ -619,8 +627,10 @@ async function apiUpdateDeal(req, res) {
             }
           }
         } else {
+        
           if (dealLastUpdate && !isUpdate) {
             // Update last deal flag without stopping deal
+
             let dataUpdate = await shareData.DCABot.updateDeal(botId, dealId, {
               config: config,
             });
@@ -631,6 +641,7 @@ async function apiUpdateDeal(req, res) {
               config: config,
             });
           } else {
+            
             success = false;
             content = "Unable to calculate orders";
           }
@@ -1322,7 +1333,7 @@ async function calculateOrders(body) {
   } else {
     botData.startConditions = body.startCondition;
   }
-
+console.log("body",body);
   // Remove empty conditions
   botData.startConditions = botData.startConditions.filter((a) => a);
 
@@ -1336,7 +1347,8 @@ async function calculateOrders(body) {
   botData.firstOrderAmount = body.firstOrderAmount;
   botData.dcaOrderAmount = body.dcaOrderAmount;
   botData.dcaMaxOrder = body.dcaMaxOrder;
-  botData.firstOrderType = body.orderType;
+
+  botData.firstOrderType = body.orderType ;
   botData.dcaOrderSizeMultiplier = body.dcaOrderSizeMultiplier;
   botData.dcaOrderStartDistance = body.dcaOrderStepPercent;
   botData.dcaOrderStepPercent = body.dcaOrderStepPercent;
@@ -1390,7 +1402,10 @@ async function calculateOrders(body) {
   botData.botName = botName;
 
   // Only get orders, don't start bot
+  console.log("botData",botData);
+  
   let orders = await shareData.DCABot.start({ create: false, config: botData });
+  console.log("orders",orders);
 
   return { active: active, pairs: pairs, orders: orders, botData: botData };
 }
