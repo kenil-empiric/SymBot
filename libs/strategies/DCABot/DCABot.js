@@ -1,31 +1,22 @@
-"use strict";
+'use strict';
 
-const fs = require("fs");
-const path = require("path");
+const fs = require('fs');
+const path = require('path');
 
-let pathRoot = path
-  .dirname(fs.realpathSync(__dirname))
-  .split(path.sep)
-  .join(path.posix.sep);
-pathRoot = pathRoot.substring(
-  0,
-  pathRoot.lastIndexOf("/", pathRoot.lastIndexOf("/") - 1)
-);
+let pathRoot = path.dirname(fs.realpathSync(__dirname)).split(path.sep).join(path.posix.sep);
+pathRoot = pathRoot.substring(0, pathRoot.lastIndexOf('/', pathRoot.lastIndexOf('/') - 1));
 
-const colors = require("colors");
-const ccxt = require("ccxt");
-const Table = require("easy-table");
-const Percentage = require("percentagejs");
-const { log } = require("console");
-const Common = require(pathRoot + "/libs/app/Common.js");
-const Schema = require(pathRoot + "/libs/mongodb/DCABotSchema");
-// const {binaryConcat} = require("ccxt/js/src/base/functions/encode");
+const colors = require('colors');
+const ccxt = require('ccxt');
+const Table = require('easy-table');
+const Percentage = require('percentagejs');
+const Common = require(pathRoot + '/libs/app/Common.js');
+const Schema = require(pathRoot + '/libs/mongodb/DCABotSchema');
 
 const Bots = Schema.Bots;
 const Deals = Schema.Deals;
 
-const insufficientFundsMsg =
-  "Your wallet does not have enough funds for all DCA orders!";
+const insufficientFundsMsg = 'Your wallet does not have enough funds for all DCA orders!';
 
 // Max minutes before trackers are removed
 const maxMinsDeals = 2;
@@ -36,843 +27,749 @@ let timerTracker = {};
 
 let shareData;
 
-let usdtBal;
-
-// for (const exchangeId of ccxt.exchanges) {
-//     try {
-//         const exchange = new ccxt[exchangeId]()
-//         if (exchange.urls.test) {
-//             console.log (exchange.id, 'has a testnet')
-//         }
-//     } catch (e) {
-//     }
-// }
-const data={
-  apiKey: '45d84ddd-d366-41f3-ab0d-366d0135657a',
-  apiPassphrase: 'Mraj@1802',
-  apiPassword: null,
-  apiSecret: '373D7B04FEDE63B0E0424666D98B56DD',
-  dcaMaxOrder: '3',
-  dcaOrderAmount: '45',
-  dcaOrderSizeMultiplier: '1.08',
-  dcaOrderStartDistance: '1.3',
-  dcaOrderStepPercent: '1.3',
-  dcaOrderStepPercentMultiplier: '1',
-  dcaTakeProfitPercent: '1.5',
-  exchange: 'coinbasepro',
-  exchangeFee: 0.45,
-  exchangeOptions: { defaultType: 'spot' },
-  firstOrderAmount: '20',
-  firstOrderLimitPrice: 1300,
-  firstOrderType: undefined,
-  pair: 'ETH/USDT',
-  sandBox: true,
-  sandBoxWallet: 100,
-  startConditions: [ 'asap' ],
-  dealMax: 0,
-  dealCoolDown: 0,
-  pairMax: 0,
-  pairDealsMax: 0,
-  volumeMin: '',
-  firstOrderPrice: '2252.84',
-  botName: 'DCA Bot ETH/USDT'
-}
-
 
 
 async function start(dataObj) {
-  let startBot = dataObj["create"];
-  console.log("dataObj____________________________________enter");
-  let data = await initBot({
-    create: startBot,
-    config: JSON.parse(JSON.stringify(dataObj["config"])),
-  });
-  const dealResumeId = data["dealResumeId"];
-  const firstOrderPrice = data["firstOrderPrice"];
-
-  delete data["dealResumeId"];
-  delete data["firstOrderPrice"];
-  console.log("dataObj___________________1_________________enter");
-
-  const config = Object.freeze(JSON.parse(JSON.stringify(data)));
-
-  let dealIdMain;
-  let botConfigDb;
-
-  let botActive = true;
-  let botFoundDb = false;
-  let pairFoundDb = false;
-  let dealLast = false;
-  let dealStop = false;
-  let pairDealsLast = false;
-  let checkActivePairOverride = false;
-
-  let totalOrderSize = 0;
-  let totalAmount = 0;
-
-  let pair = "";
-  let pairConfig = config.pair;
-  let botIdMain = config.botId;
-  let botNameMain = config.botName;
-  let dealCount = config.dealCount;
-  let dealMax = config.dealMax;
-  let pairMax = config.pairMax;
-  let pairDealsMax = config.pairDealsMax;
-
-  if (dealCount == undefined || dealCount == null) {
-    dealCount = 0;
-  }
-
-  if (dealMax == undefined || dealMax == null) {
-    dealMax = 0;
-  }
-
-  if (pairMax == undefined || pairMax == null) {
-    pairMax = 0;
-  }
-
-  if (pairDealsMax == undefined || pairDealsMax == null) {
-    pairDealsMax = 0;
-  }
-
-  ("in start2");
-  let exchange = await connectExchange(config);
-
-  ("in start3");
-
-  if (exchange == undefined || exchange == null) {
-    return { success: false, data: "Invalid exchange: " + config.exchange };
-  }
-
-  ("in start4");
-
-  try {
-    //Load markets
-    //const markets = await exchange.loadMarkets();
-
-    if (pairConfig == undefined || pairConfig == null || pairConfig == "") {
-      return;
-    } else {
-      pair = pairConfig;
-    }
-
-    pair = pair.toUpperCase();
-
-    const isActive = await checkActiveDeal(botIdMain, pair);
-    const pairDealsActive = await getDeals({
-      botId: botIdMain,
-      pair: pair,
-      status: 0,
-    });
-    const symbolData = await getSymbol(exchange, pair);
-    const symbol = symbolData.data;
-
-    // Verify number of same pairs running on bot before start to allow override
-    if (pairDealsMax > 1 && pairDealsActive.length < pairDealsMax) {
-      // Only override if not resuming deal
-      if (
-        dealResumeId == undefined ||
-        dealResumeId == null ||
-        dealResumeId == ""
-      ) {
-        checkActivePairOverride = true;
-      }
-    }
-
-    // Check for valid symbol data on start
-    if (symbolData.invalid) {
-      if (Object.keys(dealTracker).length == 0) {
-        //process.exit(0);
-      }
-
-      return { success: false, data: "Invalid Pair" };
-    } else if (symbolData.error != undefined && symbolData.error != null) {
-      // Try again if resuming existing bot deal
-      if (
-        dealResumeId != undefined &&
-        dealResumeId != null &&
-        dealResumeId != ""
-      ) {
-        const retryDelay = Number((1000 + Math.random() * 5000).toFixed(4));
-
-        let configObj = JSON.parse(JSON.stringify(config));
-
-        // Reset dealResume flag
-        configObj["dealResumeId"] = dealResumeId;
-
-        const msg =
-          "Unable to resume " +
-          configObj.botName +
-          " / Pair: " +
-          pair +
-          " / Error: " +
-          symbolData.error +
-          " Trying again in " +
-          retryDelay +
-          " seconds";
-
-        if (shareData.appData.verboseLog) {
-          Common.logger(colors.bgYellow.bold(msg));
-        }
-
-        setTimeout(() => {
-          start({ create: startBot, config: configObj });
-        }, retryDelay);
-      }
-
-      return { success: false, data: JSON.stringify(symbolData.error) };
-    }
-
-    let askPrice = symbol.ask;
-    console.log("dataObj_______________2_____________________enter");
-
-    // Override price if passed in
-    if (
-      firstOrderPrice != undefined &&
-      firstOrderPrice != null &&
-      firstOrderPrice != 0
-    ) {
-      askPrice = firstOrderPrice;
-    }
-    const orders = [];
-    // askPrice=2201.48;
-
-    if (startBot && isActive && !checkActivePairOverride) {
-      dealIdMain = isActive.dealId;
-
-      if (
-        dealResumeId != undefined &&
-        dealResumeId != null &&
-        dealResumeId != ""
-      ) {
-        dealIdMain = dealResumeId;
-      }
-
-      // Config reloaded from db so continue
-      //await Common.delay(1000);
-
-      let followSuccess = false;
-      let followFinished = false;
-
-      while (!followFinished) {
-        let followRes = await dcaFollow(config, exchange, dealIdMain);
-
-        followSuccess = followRes["success"];
-        followFinished = followRes["finished"];
-
-        if (!followSuccess) {
-          await Common.delay(1000);
-        }
-      }
-
-      if (followFinished) {
-        //break;
-      }
-    } else {
-      let lastDcaOrderAmount = 0;
-      let lastDcaOrderSize = 0;
-      let lastDcaOrderSum = 0;
-      let lastDcaOrderQtySum = 0;
-      let lastDcaOrderPrice = 0;
-
-      if (!(await volumeValid(startBot, pair, symbol, config))) {
-        return;
-      }
-      if (config.firstOrderType.toUpperCase() == "MARKET") {
-        //first order market
-        console.log("---------enter -------MARKET-------------");
-        if (shareData.appData.verboseLog) {
-          Common.logger(
-            colors.bgGreen("Calculating orders for " + pair + "...")
-          );
-        }
-
-        await Common.delay(1000);
-
-        let firstOrderSize = config.firstOrderAmount / askPrice;
-        firstOrderSize = await filterAmount(exchange, pair, firstOrderSize);
-
-        if (!firstOrderSize) {
-          if (shareData.appData.verboseLog) {
-            Common.logger(colors.bgRed("First order amount not valid."));
-          }
-
-          return false;
-        } else {
-          totalOrderSize = firstOrderSize;
-          totalAmount = config.firstOrderAmount;
-
-          const price = await filterPrice(exchange, pair, askPrice);
-
-          let amount = price * firstOrderSize;
-          let exchangeFee = (amount / 100) * Number(config.exchangeFee);
-
-          // amount = await filterPrice(exchange, pair, amount + exchangeFee);
-          console.log("dataObj___________________3_________________enter");
-
-          let targetPrice = Percentage.addPerc(
-            price,
-            config.dcaTakeProfitPercent
-          );
-
-          targetPrice = await filterPrice(exchange, pair, targetPrice);
-
-          orders.push({
-            orderNo: 1,
-            price: price,
-            average: price,
-            target: targetPrice,
-            qty: firstOrderSize,
-            amount: totalAmount,
-            qtySum: firstOrderSize,
-            sum: totalAmount,
-            type: "MARKET",
-            filled: 0,
-          });
-
-          lastDcaOrderAmount = totalAmount;
-          lastDcaOrderSize = firstOrderSize;
-          lastDcaOrderSum = amount;
-          lastDcaOrderQtySum = firstOrderSize;
-          lastDcaOrderPrice = price;
-        }
-
-        for (let i = 0; i < config.dcaMaxOrder; i++) {
-          if (i == 0) {
-            let price = Percentage.subPerc(
-              lastDcaOrderPrice,
-              config.dcaOrderStartDistance
-            );
-
-            price = await filterPrice(exchange, pair, price);
-            let dcaOrderSize = config.dcaOrderAmount / price;
-            dcaOrderSize = await filterAmount(exchange, pair, dcaOrderSize);
-
-            // let dcaOrderAmount = dcaOrderSize * price;
-            let dcaOrderAmount = config.dcaOrderAmount;
-
-            let dcaOrderSum =
-              parseFloat(dcaOrderAmount) + parseFloat(lastDcaOrderAmount);
-            dcaOrderSum = await filterPrice(exchange, pair, dcaOrderSum);
-
-            const dcaOrderQtySum =
-              parseFloat(dcaOrderSize) + parseFloat(firstOrderSize);
-
-            lastDcaOrderAmount = dcaOrderAmount;
-            lastDcaOrderSize = dcaOrderSize;
-            lastDcaOrderSum = dcaOrderSum;
-            lastDcaOrderPrice = price;
-            lastDcaOrderQtySum = dcaOrderQtySum;
-
-            const average = await filterPrice(
-              exchange,
-              pair,
-              parseFloat(lastDcaOrderSum) / parseFloat(lastDcaOrderQtySum)
-            );
-
-            let targetPrice = Percentage.addPerc(
-              average,
-              config.dcaTakeProfitPercent
-            );
-
-            targetPrice = await filterPrice(exchange, pair, targetPrice);
-            console.log("dataObj________________4____________________enter");
-
-            orders.push({
-              orderNo: i + 2,
-              price: price,
-              average: average,
-              target: targetPrice,
-              qty: dcaOrderSize,
-              amount: dcaOrderAmount,
-              qtySum: dcaOrderQtySum,
-              sum: dcaOrderSum,
-              type: "MARKET",
-              filled: 0,
-            });
-          } else {
-            const deviationPerc = await getDeviationDca(
-              config.dcaOrderStepPercent,
-              config.dcaOrderStepPercentMultiplier,
-              i + 1
-            );
-
-            let price = Percentage.subPerc(askPrice, deviationPerc);
-
-            price = await filterPrice(exchange, pair, price);
-
-            let amount = lastDcaOrderAmount * config.dcaOrderSizeMultiplier;
-            amount = await filterPrice(exchange, pair, amount);
-            let exchangeFee = (amount / 100) * Number(config.exchangeFee);
-            let dcaOrderSize = amount / price;
-            dcaOrderSize = await filterAmount(exchange, pair, dcaOrderSize);
-
-            let dcaOrderSum = parseFloat(amount) + parseFloat(lastDcaOrderSum);
-            dcaOrderSum = await filterPrice(exchange, pair, dcaOrderSum);
-
-            let dcaOrderQtySum =
-              parseFloat(dcaOrderSize) + parseFloat(lastDcaOrderQtySum);
-            dcaOrderQtySum = await filterAmount(exchange, pair, dcaOrderQtySum);
-
-            lastDcaOrderAmount = amount;
-            lastDcaOrderSize = dcaOrderSize;
-            lastDcaOrderSum = dcaOrderSum;
-            lastDcaOrderPrice = price;
-            lastDcaOrderQtySum = dcaOrderQtySum;
-
-            const average = await filterPrice(
-              exchange,
-              pair,
-              parseFloat(lastDcaOrderSum) / parseFloat(lastDcaOrderQtySum)
-            );
-            let targetPrice = Percentage.addPerc(
-              average,
-              config.dcaTakeProfitPercent
-            );
-
-            targetPrice = await filterPrice(exchange, pair, targetPrice);
-            console.log("dataObj_________________5___________________enter");
-
-            orders.push({
-              orderNo: i + 2,
-              price: price,
-              average: average,
-              target: targetPrice,
-              qty: dcaOrderSize,
-              amount: amount,
-              qtySum: dcaOrderQtySum,
-              sum: dcaOrderSum,
-              type: "MARKET",
-              filled: 0,
-            });
-          }
-        }
-
-        if (orders.length > 1) {
-          let res = await ordersValid(pair, orders);
-
-          if (!res["success"]) {
-            return { success: false, data: res["data"] };
-          }
-        }
-
-        let orderData = await ordersCreateTable({
-          config: config,
-          orders: orders,
-        });
-
-        let t = orderData["table"];
-        let maxDeviation = orderData["max_deviation"];
-
-        //(t.toString());
-        //Common.logger(t.toString());
-
-        let balanceObj;
-        let wallet = 0;
-
-        if (config.sandBox) {
-          // wallet = config.sandBoxWallet;
-          // wallet = usdtBal;
-        } else {
-          // balanceObj = await getBalance(exchange, "USDT");
-          // const balance = balanceObj.balance;
-          // wallet = balance;
-          // wallet = usdtBal;
-        }
-
-        if (config.sandBox) {
-          if (shareData.appData.verboseLog) {
-            Common.logger(
-              colors.bgYellow.bold(
-                "WARNING: Your bot will run in SANDBOX MODE!"
-              )
-            );
-          }
-        } else {
-          if (shareData.appData.verboseLog) {
-            Common.logger(
-              colors.bgRed.bold("WARNING: Your bot will run in LIVE MODE!")
-            );
-          }
-        }
-        console.log("dataObj_________________6___________________enter");
-
-        if (shareData.appData.verboseLog) {
-          Common.logger(colors.bgWhite("Your Balance: $" + wallet));
-          Common.logger(colors.bgWhite("Max Funds: $" + lastDcaOrderSum));
-        }
-
-        if (wallet < lastDcaOrderSum) {
-          if (shareData.appData.verboseLog) {
-            Common.logger(colors.red.bold.italic(insufficientFundsMsg));
-          }
-        }
-
-        let sendOrders;
-
-        if (startBot == undefined || startBot == null || startBot == false) {
-          let contentAdd = await ordersAddContent(
-            wallet,
-            lastDcaOrderSum,
-            maxDeviation,
-            balanceObj
-          );
-
-          let ordersTable = await ordersToData(t.toString());
-
-          return {
-            success: true,
-            data: {
-              pair: pair,
-              orders: ordersTable,
-              content: contentAdd,
-            },
-          };
-        }
-
-        if (startBot) {
-          const dealObj = await createDeal(
-            pair,
-            pairMax,
-            dealCount,
-            dealMax,
-            config,
-            orders
-          );
-
-          const deal = dealObj["deal"];
-          const dealId = dealObj["deal_id"];
-
-          dealIdMain = dealId;
-
-          await createDealTracker({ deal_id: dealId, deal: deal });
-
-          let followSuccess = false;
-          let followFinished = false;
-
-          while (!followFinished) {
-            let followRes = await dcaFollow(config, exchange, dealId);
-
-            followSuccess = followRes["success"];
-            followFinished = followRes["finished"];
-
-            if (!followSuccess) {
-              await Common.delay(1000);
-            }
-          }
-          console.log("dataObj_______________7_____________________enter");
-
-          if (followFinished) {
-            //break;
-          }
-        } else {
-          /*
+
+	let startBot = dataObj['create'];
+
+	let data = await initBot({ 'create': startBot, 'config': JSON.parse(JSON.stringify(dataObj['config'])) });
+
+	const dealResumeId = data['dealResumeId'];
+	const firstOrderPrice = data['firstOrderPrice'];
+
+	delete data['dealResumeId'];
+	delete data['firstOrderPrice'];
+
+	const config = Object.freeze(JSON.parse(JSON.stringify(data)));
+
+	let dealIdMain;
+	let botConfigDb;
+
+	let botActive = true;
+	let botFoundDb = false;
+	let pairFoundDb = false;
+	let dealLast = false;
+	let dealStop = false;
+	let pairDealsLast = false;
+	let checkActivePairOverride = false;
+
+	let totalOrderSize = 0;
+	let totalAmount = 0;
+
+	let pair = '';
+	let pairConfig = config.pair;
+	let botIdMain = config.botId;
+	let botNameMain = config.botName;
+	let dealCount = config.dealCount;
+	let dealMax = config.dealMax;
+	let pairMax = config.pairMax;
+	let pairDealsMax = config.pairDealsMax;
+
+	if (dealCount == undefined || dealCount == null) {
+
+		dealCount = 0;
+	}
+
+	if (dealMax == undefined || dealMax == null) {
+
+		dealMax = 0;
+	}
+
+	if (pairMax == undefined || pairMax == null) {
+
+		pairMax = 0;
+	}
+
+	if (pairDealsMax == undefined || pairDealsMax == null) {
+
+		pairDealsMax = 0;
+	}
+
+	let exchange = await connectExchange(config);
+
+	if (exchange == undefined || exchange == null) {
+
+		return ( { 'success': false, 'data': 'Invalid exchange: ' + config.exchange } );
+	}
+
+	
+	try {
+
+		//Load markets
+		//const markets = await exchange.loadMarkets();
+
+		if (pairConfig == undefined || pairConfig == null || pairConfig == '') {
+
+			return;
+		}
+		else {
+
+			pair = pairConfig;
+		}
+
+		pair = pair.toUpperCase();
+
+		const isActive = await checkActiveDeal(botIdMain, pair);
+		const pairDealsActive = await getDeals({ 'botId': botIdMain, 'pair': pair, 'status': 0 });
+		const symbolData = await getSymbol(exchange, pair);
+		const symbol = symbolData.data;
+
+		// Verify number of same pairs running on bot before start to allow override
+		if (pairDealsMax > 1 && pairDealsActive.length < pairDealsMax) {
+
+			// Only override if not resuming deal
+			if (dealResumeId == undefined || dealResumeId == null || dealResumeId == '') {
+
+				checkActivePairOverride = true;
+			}
+		}
+
+		// Check for valid symbol data on start
+		if (symbolData.invalid) {
+
+			if (Object.keys(dealTracker).length == 0) {
+
+				//process.exit(0);
+			}
+
+			return ( { 'success': false, 'data': 'Invalid Pair' } );
+		}
+		else if (symbolData.error != undefined && symbolData.error != null) {
+
+			// Try again if resuming existing bot deal
+			if (dealResumeId != undefined && dealResumeId != null && dealResumeId != '') {
+
+				const retryDelay = Number((1000 + (Math.random() * 5000)).toFixed(4));
+
+				let configObj = JSON.parse(JSON.stringify(config));
+
+				// Reset dealResume flag
+				configObj['dealResumeId'] = dealResumeId;
+
+				const msg = 'Unable to resume ' + configObj.botName + ' / Pair: ' + pair + ' / Error: ' + symbolData.error + ' Trying again in ' + retryDelay + ' seconds';
+
+				if (shareData.appData.verboseLog) { Common.logger( colors.bgYellow.bold(msg) ); }
+
+				setTimeout(() => {
+
+					start({ 'create': startBot, 'config': configObj });
+
+				}, retryDelay);
+			}
+
+			return ( { 'success': false, 'data': JSON.stringify(symbolData.error) } );
+		}
+
+		let askPrice = symbol.ask;
+
+		// Override price if passed in
+		if (firstOrderPrice != undefined && firstOrderPrice != null && firstOrderPrice != 0) {
+
+			askPrice = firstOrderPrice;
+		}
+
+		const orders = [];
+
+		if (startBot && isActive && !checkActivePairOverride) {
+
+			dealIdMain = isActive.dealId;
+
+			if (dealResumeId != undefined && dealResumeId != null && dealResumeId != '') {
+
+				dealIdMain = dealResumeId;
+			}
+
+			// Config reloaded from db so continue
+			//await Common.delay(1000);
+
+			let followSuccess = false;
+			let followFinished = false;
+
+			while (!followFinished) {
+
+				let followRes = await dcaFollow(config, exchange, dealIdMain);
+
+				followSuccess = followRes['success'];
+				followFinished = followRes['finished'];
+
+				if (!followSuccess) {
+
+					await Common.delay(1000);
+				}
+			}
+
+			if (followFinished) {
+
+				//break;
+			}
+		}
+		else {
+
+			let lastDcaOrderAmount = 0;
+			let lastDcaOrderSize = 0;
+			let lastDcaOrderSum = 0;
+			let lastDcaOrderQtySum = 0;
+			let lastDcaOrderPrice = 0;
+
+			if (!await volumeValid(startBot, pair, symbol, config)) {
+
+				return;
+			}
+
+			if (config.firstOrderType.toUpperCase() == 'MARKET') {
+
+				//first order market
+				if (shareData.appData.verboseLog) { Common.logger(colors.bgGreen('Calculating orders for ' + pair + '...')); }
+
+				await Common.delay(1000);
+
+				let firstOrderSize = config.firstOrderAmount / askPrice;
+				firstOrderSize = await filterAmount(exchange, pair, firstOrderSize);
+
+				if (!firstOrderSize) {
+
+					if (shareData.appData.verboseLog) { Common.logger(colors.bgRed('First order amount not valid.')); }
+
+					return false;
+				}
+				else {
+
+					totalOrderSize = firstOrderSize;
+					totalAmount = config.firstOrderAmount;
+
+					const price = await filterPrice(exchange, pair, askPrice);
+
+					let amount = price * firstOrderSize;
+					let exchangeFee = (amount / 100) * Number(config.exchangeFee);
+
+					amount = await filterPrice(exchange, pair, (amount + exchangeFee));
+
+					let targetPrice = Percentage.addPerc(
+						price,
+						config.dcaTakeProfitPercent
+					);
+
+					targetPrice = await filterPrice(exchange, pair, targetPrice);
+
+					orders.push({
+						orderNo: 1,
+						price: price,
+						average: price,
+						target: targetPrice,
+						qty: firstOrderSize,
+						amount: amount,
+						qtySum: firstOrderSize,
+						sum: amount,
+						type: 'MARKET',
+						filled: 0
+					});
+
+					lastDcaOrderAmount = amount;
+					lastDcaOrderSize = firstOrderSize;
+					lastDcaOrderSum = amount;
+					lastDcaOrderQtySum = firstOrderSize;
+					lastDcaOrderPrice = price;
+				}
+
+				for (let i = 0; i < config.dcaMaxOrder; i++) {
+
+					if (i == 0) {
+
+						let price = Percentage.subPerc(
+							lastDcaOrderPrice,
+							config.dcaOrderStartDistance
+						);
+
+						price = await filterPrice(exchange, pair, price);
+
+						let dcaOrderSize = config.dcaOrderAmount / price;
+						dcaOrderSize = await filterAmount(exchange, pair, dcaOrderSize);
+
+						let dcaOrderAmount = dcaOrderSize * price;
+						let exchangeFee = (dcaOrderAmount / 100) * Number(config.exchangeFee);
+
+						dcaOrderAmount = await filterPrice(exchange, pair, (dcaOrderAmount + exchangeFee));
+
+						let dcaOrderSum = parseFloat(dcaOrderAmount) + parseFloat(lastDcaOrderAmount);
+						dcaOrderSum = await filterPrice(exchange, pair, dcaOrderSum);
+
+						const dcaOrderQtySum = parseFloat(dcaOrderSize) + parseFloat(firstOrderSize);
+
+						lastDcaOrderAmount = dcaOrderAmount;
+						lastDcaOrderSize = dcaOrderSize;
+						lastDcaOrderSum = dcaOrderSum;
+						lastDcaOrderPrice = price;
+						lastDcaOrderQtySum = dcaOrderQtySum;
+
+						const average = await filterPrice(
+							exchange,
+							pair,
+							parseFloat(lastDcaOrderSum) / parseFloat(lastDcaOrderQtySum)
+						);
+
+						let targetPrice = Percentage.addPerc(
+							average,
+							config.dcaTakeProfitPercent
+						);
+
+						targetPrice = await filterPrice(exchange, pair, targetPrice);
+
+						orders.push({
+							orderNo: i + 2,
+							price: price,
+							average: average,
+							target: targetPrice,
+							qty: dcaOrderSize,
+							amount: dcaOrderAmount,
+							qtySum: dcaOrderQtySum,
+							sum: dcaOrderSum,
+							type: 'MARKET',
+							filled: 0
+						});
+					}
+					else {
+
+						let price = Percentage.subPerc(
+							lastDcaOrderPrice,
+							(config.dcaOrderStepPercent * config.dcaOrderStepPercentMultiplier)
+						);
+
+						price = await filterPrice(exchange, pair, price);
+
+						//let dcaOrderSize = lastDcaOrderSize * config.dcaOrderSizeMultiplier;
+						let dcaOrderSize = (lastDcaOrderSize * (config.dcaOrderStepPercent / 100)) + lastDcaOrderSize * config.dcaOrderSizeMultiplier;
+						dcaOrderSize = await filterAmount(exchange, pair, dcaOrderSize);
+
+						let amount = price * dcaOrderSize;
+						let exchangeFee = (amount / 100) * Number(config.exchangeFee);
+
+						amount = await filterPrice(exchange, pair, (amount + exchangeFee));
+
+						let dcaOrderSum = parseFloat(amount) + parseFloat(lastDcaOrderSum);
+						dcaOrderSum = await filterPrice(exchange, pair, dcaOrderSum);
+
+						let dcaOrderQtySum = parseFloat(dcaOrderSize) + parseFloat(lastDcaOrderQtySum);
+						dcaOrderQtySum = await filterAmount(exchange, pair, dcaOrderQtySum);
+
+						lastDcaOrderAmount = amount;
+						lastDcaOrderSize = dcaOrderSize;
+						lastDcaOrderSum = dcaOrderSum;
+						lastDcaOrderPrice = price;
+						lastDcaOrderQtySum = dcaOrderQtySum;
+
+						const average = await filterPrice(
+							exchange,
+							pair,
+							parseFloat(lastDcaOrderSum) / parseFloat(lastDcaOrderQtySum)
+						);
+
+						let targetPrice = Percentage.addPerc(
+							average,
+							config.dcaTakeProfitPercent
+						);
+
+						targetPrice = await filterPrice(exchange, pair, targetPrice);
+
+						orders.push({
+							orderNo: i + 2,
+							price: price,
+							average: average,
+							target: targetPrice,
+							qty: dcaOrderSize,
+							amount: amount,
+							qtySum: dcaOrderQtySum,
+							sum: dcaOrderSum,
+							type: 'MARKET',
+							filled: 0
+						});
+					}
+				}
+
+				if (orders.length > 1) {
+
+					let res = await ordersValid(pair, orders);
+
+					if (!res['success']) {
+
+						return ( { 'success': false, 'data': res['data'] } );
+					}
+				}
+
+				let orderData = await ordersCreateTable({ 'config': config, 'orders': orders });
+
+				let t = orderData['table'];
+				let maxDeviation = orderData['max_deviation'];
+
+				//console.log(t.toString());
+				//Common.logger(t.toString());
+
+				let balanceObj;
+				let wallet = 0;
+
+				if (config.sandBox) {
+
+					wallet = config.sandBoxWallet;
+				}
+				else {
+
+					balanceObj = await getBalance(exchange, 'USDT');
+
+					const balance = balanceObj.balance;
+					wallet = balance;
+				}
+
+				if (config.sandBox) {
+
+					if (shareData.appData.verboseLog) { Common.logger( colors.bgYellow.bold('WARNING: Your bot will run in SANDBOX MODE!') ); }
+				}
+				else {
+
+					if (shareData.appData.verboseLog) { Common.logger( colors.bgRed.bold('WARNING: Your bot will run in LIVE MODE!') ); }
+				}
+
+				if (shareData.appData.verboseLog) {
+					
+					Common.logger(colors.bgWhite('Your Balance: $' + wallet));
+					Common.logger(colors.bgWhite('Max Funds: $' + lastDcaOrderSum));
+				}
+
+				if (wallet < lastDcaOrderSum) {
+
+					if (shareData.appData.verboseLog) { Common.logger( colors.red.bold.italic(insufficientFundsMsg)); }
+				}
+
+				let sendOrders;
+
+				if (startBot == undefined || startBot == null || startBot == false) {
+
+					let contentAdd = await ordersAddContent(wallet, lastDcaOrderSum, maxDeviation, balanceObj);
+
+					let ordersTable = await ordersToData(t.toString());
+
+					return ({
+								'success': true,
+								'data': {
+											'pair': pair,
+											'orders': ordersTable,
+											'content': contentAdd,
+										}
+							});
+				}
+
+				if (startBot) {
+
+					const dealObj = await createDeal(pair, pairMax, dealCount, dealMax, config, orders);
+
+					const deal = dealObj['deal'];
+					const dealId = dealObj['deal_id'];
+
+					dealIdMain = dealId;
+
+					await createDealTracker({ 'deal_id': dealId, 'deal': deal });
+
+					let followSuccess = false;
+					let followFinished = false;
+
+					while (!followFinished) {
+
+						let followRes = await dcaFollow(config, exchange, dealId);
+
+						followSuccess = followRes['success'];
+						followFinished = followRes['finished'];
+
+						if (!followSuccess) {
+
+							await Common.delay(1000);
+						}
+					}
+
+					if (followFinished) {
+
+						//break;
+					}
+				}
+				else {
+/*
 					if (Object.keys(dealTracker).length == 0) {
 
 						Common.logger(colors.bgRed.bold(shareData.appData.name + ' is stopping... '));
 						process.exit(0);
 					}
 */
-        }
-      }
-      //if body end here
-      else {
-        //first order limit
-        console.log("---------enter -------limit-------------");
+				}
+			}
+			else {
 
-        if (shareData.appData.verboseLog) {
-          Common.logger(colors.bgGreen("Calculating orders..."))
-        }
+				//first order limit
 
-        //await Common.delay(1000);
+				if (shareData.appData.verboseLog) { Common.logger(colors.bgGreen('Calculating orders...')); }
 
-        //askPrice = config.firstOrderLimitPrice;
+				//await Common.delay(1000);
 
-        let firstOrderSize = config.firstOrderAmount / askPrice;
+				//askPrice = config.firstOrderLimitPrice;
 
-        firstOrderSize = await filterAmount(exchange, pair, firstOrderSize);
+				let firstOrderSize = config.firstOrderAmount / askPrice;
+				firstOrderSize = await filterAmount(exchange, pair, firstOrderSize);
 
-        "firstOrderSize", firstOrderSize;
+				if (!firstOrderSize) {
 
-        if (!firstOrderSize) {
-          if (shareData.appData.verboseLog) {
-            Common.logger(colors.bgRed("First order amount not valid."));
-          }
+					if (shareData.appData.verboseLog) { Common.logger(colors.bgRed('First order amount not valid.')); }
 
-          return false;
-        } else {
-          totalOrderSize = firstOrderSize;
-          totalAmount = config.firstOrderAmount;
+					return false;
+				}
+				else {
 
-          const price = await filterPrice(exchange, pair, askPrice);
+					totalOrderSize = firstOrderSize;
+					totalAmount = config.firstOrderAmount;
 
-          let amount = price * firstOrderSize;
-          let exchangeFee = (amount / 100) * Number(config.exchangeFee);
+					const price = await filterPrice(exchange, pair, askPrice);
 
-          //   amount = await filterPrice(exchange, pair, amount + exchangeFee);
+					let amount = price * firstOrderSize;
+					let exchangeFee = (amount / 100) * Number(config.exchangeFee);
 
-          let targetPrice = Percentage.addPerc(
-            price,
-            config.dcaTakeProfitPercent
-          );
+					amount = await filterPrice(exchange, pair, (amount + exchangeFee));
 
-          targetPrice = await filterPrice(exchange, pair, targetPrice);
+					let targetPrice = Percentage.addPerc(
+						price,
+						config.dcaTakeProfitPercent
+					);
 
-          orders.push({
-            orderNo: 1,
-            price: price,
-            average: price,
-            target: targetPrice,
-            qty: firstOrderSize,
-            amount: totalAmount,
-            qtySum: firstOrderSize,
-            sum: totalAmount,
-            type: "LIMIT",
-            filled: 0,
-          });
-          console.log("dataObj________________l1____________________enter");
+					targetPrice = await filterPrice(exchange, pair, targetPrice);
 
-          lastDcaOrderAmount = totalAmount;
-          lastDcaOrderSize = firstOrderSize;
-          lastDcaOrderSum = amount;
-          lastDcaOrderQtySum = firstOrderSize;
-          lastDcaOrderPrice = price;
-        }
+					orders.push({
+						orderNo: 1,
+						price: price,
+						average: price,
+						target: targetPrice,
+						qty: firstOrderSize,
+						amount: amount,
+						qtySum: firstOrderSize,
+						sum: amount,
+						type: 'LIMIT',
+						filled: 0
+					});
 
-        for (let i = 0; i < config.dcaMaxOrder; i++) {
-          if (i == 0) {
-            let price = Percentage.subPerc(
-              lastDcaOrderPrice,
-              config.dcaOrderStartDistance
-            );
+					lastDcaOrderAmount = amount;
+					lastDcaOrderSize = firstOrderSize;
+					lastDcaOrderSum = amount;
+					lastDcaOrderQtySum = firstOrderSize;
+					lastDcaOrderPrice = price;
+				}
 
-            price = await filterPrice(exchange, pair, price);
+				for (let i = 0; i < config.dcaMaxOrder; i++) {
 
-            let dcaOrderSize = config.dcaOrderAmount / price;
-            dcaOrderSize = await filterAmount(exchange, pair, dcaOrderSize);
+					if (i == 0) {
 
-            let dcaOrderAmount = config.dcaOrderAmount;
-            let exchangeFee =
-              (dcaOrderAmount / 100) * Number(config.exchangeFee);
+						let price = Percentage.subPerc(
+							lastDcaOrderPrice,
+							config.dcaOrderStartDistance
+						);
 
-            // dcaOrderAmount = await filterPrice(
-            //   exchange,
-            //   pair,
-            //   dcaOrderAmount + exchangeFee
-            // );
-            console.log("dataObj________________l2____________________enter");
+						price = await filterPrice(exchange, pair, price);
 
-            let dcaOrderSum =
-              parseFloat(dcaOrderAmount) + parseFloat(lastDcaOrderAmount);
-            dcaOrderSum = await filterPrice(exchange, pair, dcaOrderSum);
+						let dcaOrderSize = config.dcaOrderAmount / price;
+						dcaOrderSize = await filterAmount(exchange, pair, dcaOrderSize);
 
-            const dcaOrderQtySum =
-              parseFloat(dcaOrderSize) + parseFloat(firstOrderSize);
+						let dcaOrderAmount = dcaOrderSize * price;
+						let exchangeFee = (dcaOrderAmount  / 100) * Number(config.exchangeFee);
 
-            lastDcaOrderAmount = dcaOrderAmount;
-            lastDcaOrderSize = dcaOrderSize;
-            lastDcaOrderSum = dcaOrderSum;
-            lastDcaOrderPrice = price;
-            lastDcaOrderQtySum = dcaOrderQtySum;
+						dcaOrderAmount = await filterPrice(exchange, pair, (dcaOrderAmount + exchangeFee));
 
-            const average = await filterPrice(
-              exchange,
-              pair,
-              parseFloat(lastDcaOrderSum) / parseFloat(lastDcaOrderQtySum)
-            );
+						let dcaOrderSum = parseFloat(dcaOrderAmount) + parseFloat(lastDcaOrderAmount);
+						dcaOrderSum = await filterPrice(exchange, pair, dcaOrderSum);
 
-            let targetPrice = Percentage.addPerc(
-              average,
-              config.dcaTakeProfitPercent
-            );
+						const dcaOrderQtySum = parseFloat(dcaOrderSize) + parseFloat(firstOrderSize);
 
-            targetPrice = await filterPrice(exchange, pair, targetPrice);
+						lastDcaOrderAmount = dcaOrderAmount;
+						lastDcaOrderSize = dcaOrderSize;
+						lastDcaOrderSum = dcaOrderSum;
+						lastDcaOrderPrice = price;
+						lastDcaOrderQtySum = dcaOrderQtySum;
 
-            orders.push({
-              orderNo: i + 2,
-              price: price,
-              average: average,
-              target: targetPrice,
-              qty: dcaOrderSize,
-              amount: dcaOrderAmount,
-              qtySum: dcaOrderQtySum,
-              sum: dcaOrderSum,
-              type: "LIMIT",
-              filled: 0,
-            });
-          } else {
-            const deviationPerc = await getDeviationDca(
-              config.dcaOrderStepPercent,
-              config.dcaOrderStepPercentMultiplier,
-              i + 1
-            );
+						const average = await filterPrice(
+							exchange,
+							pair,
+							parseFloat(lastDcaOrderSum) / parseFloat(lastDcaOrderQtySum)
+						);
 
-            let price = Percentage.subPerc(askPrice, deviationPerc);
+						let targetPrice = Percentage.addPerc(
+							average,
+							config.dcaTakeProfitPercent
+						);
 
-            price = await filterPrice(exchange, pair, price);
+						targetPrice = await filterPrice(exchange, pair, targetPrice);
 
-            let amount = lastDcaOrderAmount * config.dcaOrderSizeMultiplier;
-            amount = await filterPrice(exchange, pair, amount);
-            let exchangeFee = (amount / 100) * Number(config.exchangeFee);
-            let dcaOrderSize = amount / price;
-            dcaOrderSize = await filterAmount(exchange, pair, dcaOrderSize);
+						orders.push({
+							orderNo: i + 2,
+							price: price,
+							average: average,
+							target: targetPrice,
+							qty: dcaOrderSize,
+							amount: dcaOrderAmount,
+							qtySum: dcaOrderQtySum,
+							sum: dcaOrderSum,
+							type: 'MARKET',
+							filled: 0
+						});
+					}
+					else {
 
-            let dcaOrderSum = parseFloat(amount) + parseFloat(lastDcaOrderSum);
-            dcaOrderSum = await filterPrice(exchange, pair, dcaOrderSum);
+						let price = Percentage.subPerc(
+							lastDcaOrderPrice,
+							(config.dcaOrderStepPercent * config.dcaOrderStepPercentMultiplier));
 
-            let dcaOrderQtySum =
-              parseFloat(dcaOrderSize) + parseFloat(lastDcaOrderQtySum);
-            dcaOrderQtySum = await filterAmount(exchange, pair, dcaOrderQtySum);
+						price = await filterPrice(exchange, pair, price);
 
-            lastDcaOrderAmount = amount;
-            lastDcaOrderSize = dcaOrderSize;
-            lastDcaOrderSum = dcaOrderSum;
-            lastDcaOrderPrice = price;
-            lastDcaOrderQtySum = dcaOrderQtySum;
-            console.log("dataObj________________l3____________________enter");
+						let dcaOrderSize = lastDcaOrderSize * config.dcaOrderSizeMultiplier;
+						dcaOrderSize = await filterAmount(exchange, pair, dcaOrderSize);
 
-            const average = await filterPrice(
-              exchange,
-              pair,
-              parseFloat(lastDcaOrderSum) / parseFloat(lastDcaOrderQtySum)
-            );
-            let targetPrice = Percentage.addPerc(
-              average,
-              config.dcaTakeProfitPercent
-            );
+						let amount = price * dcaOrderSize;
+						let exchangeFee = (amount / 100) * Number(config.exchangeFee);
 
-            targetPrice = await filterPrice(exchange, pair, targetPrice);
+						amount = await filterPrice(exchange, pair, (amount + exchangeFee));
 
-            orders.push({
-              orderNo: i + 2,
-              price: price,
-              average: average,
-              target: targetPrice,
-              qty: dcaOrderSize,
-              amount: amount,
-              qtySum: dcaOrderQtySum,
-              sum: dcaOrderSum,
-              type: "LIMIT",
-              filled: 0,
-            });
-          }
-        }
+						let dcaOrderSum = parseFloat(amount) + parseFloat(lastDcaOrderSum);
+						dcaOrderSum = await filterPrice(exchange, pair, dcaOrderSum);
 
-        if (orders.length > 1) {
-          let res = await ordersValid(pair, orders);
+						let dcaOrderQtySum = parseFloat(dcaOrderSize) + parseFloat(lastDcaOrderQtySum);
+						dcaOrderQtySum = await filterAmount(exchange, pair, dcaOrderQtySum);
 
-          if (!res["success"]) {
-            return { success: false, data: res["data"] };
-          }
-        }
+						lastDcaOrderAmount = amount;
+						lastDcaOrderSize = dcaOrderSize;
+						lastDcaOrderSum = dcaOrderSum;
+						lastDcaOrderPrice = price;
+						lastDcaOrderQtySum = dcaOrderQtySum;
 
-        let orderData = await ordersCreateTable({
-          config: config,
-          orders: orders,
-        });
+						const average = await filterPrice(
+							exchange,
+							pair,
+							parseFloat(lastDcaOrderSum) / parseFloat(lastDcaOrderQtySum)
+						);
 
-        let t = orderData["table"];
-        let maxDeviation = orderData["max_deviation"];
+						let targetPrice = Percentage.addPerc(
+							average,
+							config.dcaTakeProfitPercent
+						);
 
-        //(t.toString());
-        //Common.logger(t.toString());
+						targetPrice = await filterPrice(exchange, pair, targetPrice);
 
-        let balanceObj;
-        let wallet = 0;
+						orders.push({
+							orderNo: i + 2,
+							price: price,
+							average: average,
+							target: targetPrice,
+							qty: dcaOrderSize,
+							amount: amount,
+							qtySum: dcaOrderQtySum,
+							sum: dcaOrderSum,
+							type: 'MARKET',
+							filled: 0
+						});
+					}
+				}
 
-        if (config.sandBox) {
-          wallet = config.sandBoxWallet;
-          // wallet = usdtBal;
-        } else {
-          balanceObj = await getBalance(exchange, "USDT");
+				if (orders.length > 1) {
 
-          const balance = balanceObj.balance;
-          wallet = balance;
-          // wallet = usdtBal;
-        }
+					let res = await ordersValid(pair, orders);
 
-        if (config.sandBox) {
-          if (shareData.appData.verboseLog) {
-            Common.logger(
-              colors.bgRed.bold("WARNING: Your bot work on SANDBOX MODE !")
-            );
-          }
-        } else {
-          if (shareData.appData.verboseLog) {
-            Common.logger(
-              colors.bgGreen.bold("WARNING: Your bot work on LIVE MODE !")
-            );
-          }
-        }
-        console.log("dataObj________________l4____________________enter");
+					if (!res['success']) {
 
-        if (shareData.appData.verboseLog) {
-          Common.logger(colors.bgWhite("Your Balance: $" + wallet));
-          Common.logger(colors.bgWhite("Max Funds: $" + lastDcaOrderSum));
-        }
+						return ( { 'success': false, 'data': res['data'] } );
+					}
+				}
 
-        if (wallet < lastDcaOrderSum) {
-          if (shareData.appData.verboseLog) {
-            Common.logger(colors.red.bold.italic(insufficientFundsMsg));
-          }
-        }
+				let orderData = await ordersCreateTable({ 'config': config, 'orders': orders });
 
-        let sendOrders;
+				let t = orderData['table'];
+				let maxDeviation = orderData['max_deviation'];
 
-        if (startBot == undefined || startBot == null || startBot == false) {
-          let contentAdd = await ordersAddContent(
-            wallet,
-            lastDcaOrderSum,
-            maxDeviation,
-            balanceObj
-          );
+				//console.log(t.toString());
+				//Common.logger(t.toString());
 
-          let ordersTable = await ordersToData(t.toString());
+				let balanceObj;
+				let wallet = 0;
 
-          return {
-            success: true,
-            data: {
-              pair: pair,
-              orders: ordersTable,
-              content: contentAdd,
-            },
-          };
-        }
-        console.log("dataObj________________l5____________________enter");
+				if (config.sandBox) {
 
-        if (startBot) {
-          const dealObj = await createDeal(
-            pair,
-            pairMax,
-            dealCount,
-            dealMax,
-            config,
-            orders
-          );
+					wallet = config.sandBoxWallet;
+				}
+				else {
 
-          const deal = dealObj["deal"];
-          const dealId = dealObj["deal_id"];
+					balanceObj = await getBalance(exchange, 'USDT');
 
-          dealIdMain = dealId;
+					const balance = balanceObj.balance;
+					wallet = balance;
+				}
 
-          await createDealTracker({ deal_id: dealId, deal: deal });
+				if (config.sandBox) {
 
-          let followSuccess = false;
-          let followFinished = false;
+					if (shareData.appData.verboseLog) { Common.logger( colors.bgRed.bold('WARNING: Your bot work on SANDBOX MODE !') ); }
+				}
+				else {
 
-          while (!followFinished) {
-            let followRes = await dcaFollow(config, exchange, dealId);
+					if (shareData.appData.verboseLog) { Common.logger( colors.bgGreen.bold('WARNING: Your bot work on LIVE MODE !') ); }
+				}
 
-            followSuccess = followRes["success"];
-            followFinished = followRes["finished"];
-            console.log("dataObj________________l6____________________enter");
+				if (shareData.appData.verboseLog) {
+				
+					Common.logger(colors.bgWhite('Your Balance: $' + wallet));
+					Common.logger(colors.bgWhite('Max Funds: $' + lastDcaOrderSum));
+				}
 
-            if (!followSuccess) {
-              await Common.delay(1000);
-            }
-          }
-        } else {
-          /*
+				if (wallet < lastDcaOrderSum) {
+
+					if (shareData.appData.verboseLog) { Common.logger( colors.red.bold.italic(insufficientFundsMsg) ); }
+				}
+
+				let sendOrders;
+
+				if (startBot == undefined || startBot == null || startBot == false) {
+
+					let contentAdd = await ordersAddContent(wallet, lastDcaOrderSum, maxDeviation, balanceObj);
+
+					let ordersTable = await ordersToData(t.toString());
+
+					return ({
+								'success': true,
+								'data': {
+											'pair': pair,
+											'orders': ordersTable,
+											'content': contentAdd
+										}
+							});
+				}
+
+				if (startBot) {
+
+					const dealObj = await createDeal(pair, pairMax, dealCount, dealMax, config, orders);
+
+					const deal = dealObj['deal'];
+					const dealId = dealObj['deal_id'];
+
+					dealIdMain = dealId;
+
+					await createDealTracker({ 'deal_id': dealId, 'deal': deal });
+
+					let followSuccess = false;
+					let followFinished = false;
+
+					while (!followFinished) {
+
+						let followRes = await dcaFollow(config, exchange, dealId);
+
+						followSuccess = followRes['success'];
+						followFinished = followRes['finished'];
+
+						if (!followSuccess) {
+
+							await Common.delay(1000);
+						}
+					}
+				}
+				else {
+
+/*
 					if (Object.keys(dealTracker).length == 0) {
 
 						Common.logger(colors.bgRed.bold(shareData.appData.name + ' is stopping... '));
@@ -880,2775 +777,2522 @@ async function start(dataObj) {
 						process.exit(0);
 					}
 */
-        }
-      }
-    }
-  } catch (e) {
-    Common.logger(e);
-    console.log(e);
-    //(e);
-  }
+				}
+			}
+		}
+	}
+	catch (e) {
 
-  // Refresh bot config in case any settings changed
+		Common.logger(e);
+		//console.log(e);
+	}
 
-  try {
-    const bot = await getBots({ botId: botIdMain });
 
-    if (bot && bot.length > 0) {
-      botFoundDb = true;
+	// Refresh bot config in case any settings changed
 
-      botNameMain = bot[0]["botName"];
+	try {
 
-      let botPairsDb = bot[0]["config"]["pair"];
+		const bot = await getBots({ 'botId': botIdMain });
 
-      // Make sure pair was not removed from bot configuration
-      for (let pairDb of botPairsDb) {
-        if (pair.toUpperCase() == pairDb.toUpperCase()) {
-          pairFoundDb = true;
-        }
-      }
+		if (bot && bot.length > 0) {
 
-      if (!bot[0]["active"]) {
-        botActive = false;
-      } else {
-        botConfigDb = bot[0]["config"];
+			botFoundDb = true;
 
-        dealMax = botConfigDb["dealMax"];
-        pairMax = botConfigDb["pairMax"];
-        pairDealsMax = botConfigDb["pairDealsMax"];
-      }
-    }
-  } catch (e) {}
+			botNameMain = bot[0]['botName'];
 
-  if (dealCount >= dealMax && dealMax > 0) {
-    // Deactivate bot
-    const data = await updateBot(botIdMain, { active: false });
+			let botPairsDb = bot[0]['config']['pair'];
 
-    if (shareData.appData.verboseLog) {
-      Common.logger(
-        colors.bgYellow.bold(
-          config.botName +
-            ": Max deal count reached. Bot will not start another deal."
-        )
-      );
-    }
+			// Make sure pair was not removed from bot configuration
+			for (let pairDb of botPairsDb) {
 
-    const statusObj = await sendBotStatus({
-      bot_id: botIdMain,
-      bot_name: botNameMain,
-      active: false,
-      success: data.success,
-    });
-  }
+				if (pair.toUpperCase() == pairDb.toUpperCase()) {
 
-  // Get total active same pairs currently running on bot
-  let pairDealsActive = await getDeals({
-    botId: botIdMain,
-    pair: pair,
-    status: 0,
-  });
+					pairFoundDb = true;
+				}
+ 			}
+ 
+			if (!bot[0]['active']) {
 
-  if (pairDealsMax > 1 && pairDealsActive.length >= pairDealsMax) {
-    pairDealsLast = true;
-  }
+				botActive = false;
+			}
+			else {
 
-  // Get total active pairs currently running on bot
-  let botDealsActive = await getDeals({ botId: botIdMain, status: 0 });
+				botConfigDb = bot[0]['config'];
 
-  let pairCount = botDealsActive.length;
+				dealMax = botConfigDb['dealMax'];
+				pairMax = botConfigDb['pairMax'];
+				pairDealsMax = botConfigDb['pairDealsMax'];
+			}
+		}
+	}
+	catch(e) {
 
-  // Check if last deal flag is set
-  let botDealCurrent = await getDeals({ botId: botIdMain, dealId: dealIdMain });
+	}
 
-  if (botDealCurrent && botDealCurrent.length > 0) {
-    for (let i = 0; i < botDealCurrent.length; i++) {
-      let deal = botDealCurrent[i];
+	if (dealCount >= dealMax && dealMax > 0) {
 
-      let dealId = deal["dealId"];
-      let config = deal["config"];
+		// Deactivate bot
+		const data = await updateBot(botIdMain, { 'active': false });
+		
+		if (shareData.appData.verboseLog) {
+			
+			Common.logger( colors.bgYellow.bold(config.botName + ': Max deal count reached. Bot will not start another deal.') );
+		}
 
-      if (config["dealLast"]) {
-        dealLast = true;
-      }
-    }
-  }
+		const statusObj = await sendBotStatus({ 'bot_id': botIdMain, 'bot_name': botNameMain, 'active': false, 'success': data.success });
+	}
 
-  // Check if deal stop was requested
-  try {
-    if (dealTracker[dealIdMain]["update"]["deal_stop"]) {
-      dealStop = true;
-      delete dealTracker[dealIdMain];
-    }
-  } catch (e) {}
+	// Get total active same pairs currently running on bot
+	let pairDealsActive = await getDeals({ 'botId': botIdMain, 'pair': pair, 'status': 0 });
 
-  // Start another bot deal if max deals and max pairs have not been reached
-  if (
-    !pairDealsLast &&
-    !dealStop &&
-    botFoundDb &&
-    botActive &&
-    !dealLast &&
-    (pairCount < pairMax || pairMax == 0)
-  ) {
-    let configObj = JSON.parse(JSON.stringify(config));
+	if (pairDealsMax > 1 && pairDealsActive.length >= pairDealsMax) {
 
-    if (pairFoundDb && (dealCount < dealMax || dealMax == 0)) {
-      botConfigDb["pair"] = pair; // Set single pair
-      botConfigDb["dealCount"] = configObj["dealCount"];
+		pairDealsLast = true;
+	}
 
-      // Increment deal count
-      botConfigDb["dealCount"]++;
+	// Get total active pairs currently running on bot
+	let botDealsActive = await getDeals({ 'botId': botIdMain, 'status': 0 });
 
-      // Apply config data again
-      botConfigDb = await applyConfigData({
-        signal_id: configObj.signalId,
-        bot_id: botIdMain,
-        bot_name: botNameMain,
-        config: botConfigDb,
-      });
+	let pairCount = botDealsActive.length;
 
-      if (shareData.appData.verboseLog) {
-        Common.logger(
-          colors.bgGreen(
-            "Starting new bot deal for " +
-              pair.toUpperCase() +
-              " " +
-              botConfigDb["dealCount"] +
-              " / " +
-              botConfigDb["dealMax"]
-          )
-        );
-      }
+	// Check if last deal flag is set
+	let botDealCurrent = await getDeals({ 'botId': botIdMain, 'dealId': dealIdMain });
 
-      if (botConfigDb["dealCoolDown"] == 0) {
-        start({ create: true, config: botConfigDb });
-      } else {
-        if (shareData.appData.verboseLog) {
-          Common.logger(
-            colors.bgYellow.bold(
-              "Waiting " +
-                botConfigDb["dealCoolDown"] +
-                " seconds for " +
-                pair.toUpperCase() +
-                " cooldown before starting new deal."
-            )
-          );
-        }
+	if (botDealCurrent && botDealCurrent.length > 0) {
 
-        startDelay({
-          config: botConfigDb,
-          delay: botConfigDb["dealCoolDown"],
-          notify: false,
-        });
-      }
-    } else {
-      // Check for another pair to start if deal max reached above on current pair
-      // Deal max will be reset so current pair could still begin again at some point
+		for (let i = 0; i < botDealCurrent.length; i++) {
 
-      startAsap(pair);
-    }
-  }
+			let deal = botDealCurrent[i];
+
+			let dealId = deal['dealId'];		
+			let config = deal['config'];
+
+			if (config['dealLast']) {
+
+				dealLast = true;
+			}
+		}
+	}
+
+
+	// Check if deal stop was requested
+	try {
+
+		if (dealTracker[dealIdMain]['update']['deal_stop']) {
+
+			dealStop = true;
+
+			await deleteDealTracker(dealIdMain);
+		}
+	}
+	catch(e) {
+
+	}
+
+
+	// Start another bot deal if max deals and max pairs have not been reached
+	if (!pairDealsLast && !dealStop && botFoundDb && botActive && !dealLast && (pairCount < pairMax || pairMax == 0)) {
+
+		let configObj = JSON.parse(JSON.stringify(config));
+
+		if (pairFoundDb && (dealCount < dealMax || dealMax == 0)) {
+
+			botConfigDb['pair'] = pair; // Set single pair
+			botConfigDb['dealCount'] = configObj['dealCount'];
+
+			// Increment deal count
+			botConfigDb['dealCount']++;
+
+			// Apply config data again
+			botConfigDb = await applyConfigData({ 'signal_id': configObj.signalId, 'bot_id': botIdMain, 'bot_name': botNameMain, 'config': botConfigDb });
+
+			if (shareData.appData.verboseLog) {
+
+				Common.logger(colors.bgGreen('Starting new bot deal for ' + pair.toUpperCase() + ' ' + botConfigDb['dealCount'] + ' / ' + botConfigDb['dealMax']));
+			}
+
+			if (botConfigDb['dealCoolDown'] == 0) {
+
+				start({ 'create': true, 'config': botConfigDb });
+			}
+			else {
+
+				if (shareData.appData.verboseLog) {
+
+					Common.logger(colors.bgYellow.bold('Waiting ' + botConfigDb['dealCoolDown'] + ' seconds for ' + pair.toUpperCase() + ' cooldown before starting new deal.'));
+				}
+
+				startDelay({ 'config': botConfigDb, 'delay': botConfigDb['dealCoolDown'], 'notify': false });
+			}
+		}
+		else {
+
+			// Check for another pair to start if deal max reached above on current pair
+			// Deal max will be reset so current pair could still begin again at some point
+
+			startAsap(pair);
+		}
+	}
 }
 
-//for auto
+
 const dcaFollow = async (configDataObj, exchange, dealId) => {
-  let configData = JSON.parse(JSON.stringify(configDataObj));
-
-  if (
-    shareData.appData.database_error != undefined &&
-    shareData.appData.database_error != null &&
-    shareData.appData.database_error != ""
-  ) {
-    Common.logger(
-      colors.red.bold(shareData.appData.database_error + " - Not processing")
-    );
-    return { success: false, finished: false };
-  }
-
-  if (dealTracker[dealId]["update"]["deal_stop"]) {
-    Common.logger(
-      colors.red.bold("Deal ID " + dealId + " stop requested. Not processing")
-    );
-
-    return { success: false, finished: true };
-  }
-
-  if (dealTracker[dealId]["update"]["deal_pause"]) {
-    Common.logger(
-      colors.red.bold("Deal ID " + dealId + " pause requested. Not processing")
-    );
-
-    return { success: false, finished: false };
-  }
-
-  if (shareData.appData.sig_int) {
-    Common.logger(
-      colors.red.bold(
-        shareData.appData.name +
-          " is terminating. Not processing deal " +
-          dealId
-      )
-    );
-
-    return { success: false, finished: false };
-  }
-
-  // Refresh config without restarting deal
-  if (
-    dealTracker[dealId]["update"] != undefined &&
-    dealTracker[dealId]["update"] != null &&
-    dealTracker[dealId]["update"]["config"]
-  ) {
-    const configRefresh = JSON.parse(
-      JSON.stringify(dealTracker[dealId]["update"]["config"])
-    );
-
-    delete configData["dealLast"];
-
-    if (configRefresh["dealLast"]) {
-      configData["dealLast"] = true;
-    }
-
-    delete dealTracker[dealId]["update"]["config"];
-
-    return { success: true, finished: false, config: configRefresh };
-  }
-
-  if (
-    dealTracker[dealId]["update"] != undefined &&
-    dealTracker[dealId]["update"] != null &&
-    dealTracker[dealId]["update"]["deal_sell_error"]
-  ) {
-    let diffSec =
-      (new Date().getTime() -
-        new Date(
-          dealTracker[dealId]["update"]["deal_sell_error"]["date"]
-        ).getTime()) /
-      1000;
-
-    if (
-      dealTracker[dealId]["update"]["deal_sell_error"]["count"] >
-        maxSellErrorCount ||
-      diffSec > 30
-    ) {
-      delete dealTracker[dealId]["update"]["deal_sell_error"];
-    }
-  }
-
-  const config = Object.freeze(JSON.parse(JSON.stringify(configData)));
-
-  let success = true;
-  let finished = false;
-
-  try {
-    const deal = await Deals.findOne({
-      dealId: dealId,
-      status: 0,
-    });
-   
-    if (deal) {
-      const pair = deal.pair;
-      const symbolData = await getSymbol(exchange, pair);
-      const symbol = symbolData.data;
-
-      // Error getting symbol data
-      if (symbolData.error != undefined && symbolData.error != null) {
-        success = false;
-
-        if (Object.keys(dealTracker).length == 0) {
-          //process.exit(0);
-        }
-
-        return { success: success, finished: finished };
-      }
-
-      const bidPrice = symbol.bid;
-      const askPrice = symbol.ask;
-
-      const price = parseFloat(bidPrice);
-
-      let targetPrice = 0;
-
-      let orders = deal.orders;
-
-      if (deal.isStart == 0) {
-        const baseOrder = deal.orders[0];
-        targetPrice = baseOrder.target;
-
-        "basOrder type", baseOrder.type;
-
-        if (baseOrder.type == "MARKET") {
-          //Send market order to exchange
-
-          if (!config.sandBox) {
-            const priceFiltered = await filterPrice(exchange, pair, price);
-            const buy = await buyOrder(
-              exchange,
-              dealId,
-              pair,
-              baseOrder.qty,
-              priceFiltered
-            );
-            if (!buy.success) {
-              let finished = false;
-
-              const statusObj = await orderError({
-                bot_id: config.botId,
-                bot_name: config.botName,
-                deal_id: dealId,
-              });
-
-              if (statusObj["success"]) {
-                await deleteDeal(dealId);
-                finished = true;
-              }
-
-              return { success: false, finished: finished };
-            }
-          }
-
-          orders[0].filled = 1;
-          orders[0].dateFilled = new Date();
-
-          if (shareData.appData.verboseLog) {
-            Common.logger(
-              colors.green.bold.italic(
-                "Pair: " +
-                  pair +
-                  "\tQty: " +
-                  baseOrder.qty +
-                  "\tPrice: " +
-                  baseOrder.price +
-                  "\tAmount: " +
-                  baseOrder.amount +
-                  "\tStatus: Filled"
-              )
-            );
-          }
-
-          let orderData = await ordersCreateTable({
-            config: config,
-            orders: orders,
-          });
-
-          let t = orderData["table"];
-          let maxDeviation = orderData["max_deviation"];
-
-          //(t.toString());
-          //Common.logger(t.toString());
-
-          await updateDealTracker({
-            deal_id: dealId,
-            price: price,
-            config: config,
-            orders: orders,
-          });
-
-          await Deals.updateOne(
-            {
-              dealId: dealId,
-            },
-            {
-              isStart: 1,
-              orders: orders,
-            }
-          );
-        } else {
-          //send limit order
-          if (price <= baseOrder.price) {
-            if (!config.sandBox) {
-              const priceFiltered = await filterPrice(exchange, pair, price);
-        
-              const buy = await buyLimitOrder(
-                exchange,
-                dealId,
-                pair,
-                baseOrder.qty,
-                priceFiltered
-              );
-
-              if (!buy.success) {
-                let finished = false;
-
-                const statusObj = await orderError({
-                  bot_id: config.botId,
-                  bot_name: config.botName,
-                  deal_id: dealId,
-                });
-
-                if (statusObj["success"]) {
-                  await deleteDeal(dealId);
-
-                  finished = true;
-                }
-
-                return { success: false, finished: finished };
-              }
-            }
-
-            orders[0].filled = 1;
-            orders[0].dateFilled = new Date();
-
-            if (shareData.appData.verboseLog) {
-              Common.logger(
-                colors.green.bold.italic(
-                  "Pair: " +
-                    pair +
-                    "\tQty: " +
-                    baseOrder.qty +
-                    "\tPrice: " +
-                    baseOrder.price +
-                    "\tAmount: " +
-                    baseOrder.amount +
-                    "\tStatus: Filled"
-                )
-              );
-            }
-
-            let orderData = await ordersCreateTable({
-              config: config,
-              orders: orders,
-            });
-
-            let t = orderData["table"];
-            let maxDeviation = orderData["max_deviation"];
-
-            //(t.toString());
-            //Common.logger(t.toString());
-            await updateDealTracker({
-              deal_id: dealId,
-              price: price,
-              config: config,
-              orders: orders,
-            });
-
-            await Deals.updateOne(
-              {
-                dealId: dealId,
-              },
-              {
-                isStart: 1,
-                orders: orders,
-              }
-            );
-          } else {
-            if (shareData.appData.verboseLog) {
-              Common.logger(
-                "DCA BOT will start when price react " +
-                  baseOrder.price +
-                  ", now price is " +
-                  price +
-                  ""
-              );
-            }
-          }
-        }
-      } else {
-        const filledOrders = deal.orders.filter((item) => item.filled == 1);
-        const currentOrder = filledOrders.pop();
-
-        let profit = await Percentage.subNumsAsPerc(
-          price,
-          currentOrder.average
-        );
-
-        profit = Number(profit).toFixed(2);
-        let profitPerc = profit;
-
-        profit =
-          profit > 0
-            ? colors.green.bold(profit + "%")
-            : colors.red.bold(profit + "%");
-
-        let count = 0;
-        let maxSafetyOrdersUsed = false;
-        let ordersFilledTotal = filledOrders.length;
-
-        if (ordersFilledTotal >= orders.length - 1) {
-          maxSafetyOrdersUsed = true;
-        }
-
-        for (let i = 0; i < orders.length; i++) {
-          const order = orders[i];
-          // console.log("This is  order",order);
-          // Check if max safety orders used, otherwise sell order condition will not be checked
-          if (order.filled == 0 || maxSafetyOrdersUsed) {
-            if (price <= parseFloat(order.price) && order.filled == 0) {
-              //Buy DCA
-              if (order.type == "MARKET") {
-                if (!config.sandBox) {
-                  const priceFiltered = await filterPrice(
-                    exchange,
-                    pair,
-                    price
-                  );
-
-                  const buy = await buyOrder(
-                    exchange,
-                    dealId,
-                    pair,
-                    order.qty,
-                    priceFiltered
-                  );
-
-                  if (!buy.success) {
-                    return { success: false, finished: false };
-                  }
-                }
-              } else {
-                if (!config.sandBox) {
-                  const priceFiltered = await filterPrice(
-                    exchange,
-                    pair,
-                    order.price
-                  );
-
-                  const buy = await buyLimitOrder(
-                    exchange,
-                    dealId,
-                    pair,
-                    order.qty,
-                    priceFiltered
-                  );
-
-                  if (!buy.success) {
-                    return { success: false, finished: false };
-                  }
-                }
-              }
-
-              if (shareData.appData.verboseLog) {
-                Common.logger(
-                  colors.blue.bold.italic(
-                    "Pair: " +
-                      pair +
-                      "\tQty: " +
-                      currentOrder.qtySum +
-                      "\tLast Price: $" +
-                      price +
-                      "\tDCA Price: $" +
-                      currentOrder.average +
-                      "\tSell Price: $" +
-                      currentOrder.target +
-                      "\tStatus: " +
-                      colors.green("BUY") +
-                      "" +
-                      "\tProfit: " +
-                      profit +
-                      ""
-                  )
-                );
-              }
-
-              orders[i].filled = 1;
-              orders[i].dateFilled = new Date();
-
-              await updateDealTracker({
-                deal_id: dealId,
-                price: price,
-                config: config,
-                orders: orders,
-              });
-
-              await Deals.updateOne(
-                {
-                  dealId: dealId,
-                },
-                {
-                  orders: orders,
-                }
-              );
-            } else if (
-              price >= parseFloat(currentOrder.target) ||
-              dealTracker[dealId]["update"]["deal_cancel"] ||
-              dealTracker[dealId]["update"]["deal_panic_sell"]
-            ) {
-              //Sell order
-              if (
-                dealTracker[dealId]["update"]["deal_sell_error"] == undefined ||
-                dealTracker[dealId]["update"]["deal_sell_error"] == null
-              ) {
-                dealTracker[dealId]["update"]["deal_sell_error"] = {};
-                dealTracker[dealId]["update"]["deal_sell_error"]["count"] = 0;
-                dealTracker[dealId]["update"]["deal_sell_error"]["date"] =
-                  new Date();
-              }
-
-              if (deal.isStart == 1) {
-                let addFee;
-                let sellErrorCount;
-
-                let canceled = false;
-                let panicSell = false;
-                let sellSuccess = true;
-
-                try {
-                  sellErrorCount =
-                    dealTracker[dealId]["update"]["deal_sell_error"]["count"];
-
-                  addFee = 0.005 * sellErrorCount;
-                } catch (e) {}
-
-                if (addFee == undefined || addFee == null) {
-                  addFee = 0;
-                }
-
-                if (addFee > 0) {
-                  if (shareData.appData.verboseLog) {
-                    Common.logger(
-                      "Applying additional exchange fee of " +
-                        addFee +
-                        "% to reduce sell quantity for deal " +
-                        dealId +
-                        ". Attempt: " +
-                        sellErrorCount +
-                        "/" +
-                        maxSellErrorCount
-                    );
-                  }
-                }
-
-                const feeData = await calculateExchangeFees(
-                  pair,
-                  price,
-                  exchange,
-                  config,
-                  currentOrder,
-                  addFee
-                );
-
-                const qtySumSell = feeData["dcaOrderQtySumNet"];
-                const priceFiltered = feeData["priceFiltered"];
-
-                if (dealTracker[dealId]["update"]["deal_cancel"]) {
-                  canceled = true;
-                }
-
-                if (dealTracker[dealId]["update"]["deal_panic_sell"]) {
-                  panicSell = true;
-                }
-
-                if (!config.sandBox && !canceled) {
-                  const sell = await sellOrder(
-                    exchange,
-                    dealId,
-                    pair,
-                    qtySumSell,
-                    priceFiltered
-                  );
-
-                  if (!sell.success) {
-                    sellSuccess = false;
-                  }
-                }
-
-                if (sellSuccess) {
-                  await updateDealTracker({
-                    deal_id: dealId,
-                    price: price,
-                    config: config,
-                    orders: orders,
-                  });
-
-                  if (shareData.appData.verboseLog) {
-                    Common.logger(
-                      colors.blue.bold.italic(
-                        "Pair: " +
-                          pair +
-                          "\tQty: " +
-                          currentOrder.qtySum +
-                          "\tLast Price: $" +
-                          price +
-                          "\tDCA Price: $" +
-                          currentOrder.average +
-                          "\tSell Price: $" +
-                          currentOrder.target +
-                          "\tStatus: " +
-                          colors.red("SELL") +
-                          "" +
-                          "\tProfit: " +
-                          profit +
-                          ""
-                      )
-                    );
-                  }
-
-                  const sellData = {
-                    date: new Date(),
-                    qtySum: currentOrder.qtySum,
-                    qtySumSell: qtySumSell,
-                    price: price,
-                    average: currentOrder.average,
-                    target: currentOrder.target,
-                    profit: profitPerc,
-                    feeData: feeData,
-                  };
-
-                  await Deals.updateOne(
-                    {
-                      dealId: dealId,
-                    },
-                    {
-                      sellData: sellData,
-                      panicSell: panicSell,
-                      canceled: canceled,
-                      status: 1,
-                    }
-                  );
-
-                  finished = true;
-
-                  await deleteDealTracker(dealId);
-
-                  if (shareData.appData.verboseLog) {
-                    Common.logger(
-                      colors.bgRed("Deal ID " + dealId + " DCA Bot Finished.")
-                    );
-                  }
-
-                  sendNotificationFinish(
-                    config.botName,
-                    dealId,
-                    pair,
-                    sellData
-                  );
-                } else {
-                  // Sell failed
-                  dealTracker[dealId]["update"]["deal_sell_error"]["count"]++;
-                  dealTracker[dealId]["update"]["deal_sell_error"]["date"] =
-                    new Date();
-
-                  await Common.delay(1000);
-                }
-
-                success = true;
-
-                return { success: success, finished: finished };
-              }
-            } else {
-              await updateDealTracker({
-                deal_id: dealId,
-                price: price,
-                config: config,
-                orders: orders,
-              });
-
-              if (shareData.appData.verboseLog) {
-                Common.logger(
-                  "Pair: " +
-                    pair +
-                    "\tLast Price: $" +
-                    price +
-                    "\tDCA Price: $" +
-                    currentOrder.average +
-                    "\t\tTarget: $" +
-                    currentOrder.target +
-                    "\t\tNext Order: $" +
-                    order.price +
-                    "\tProfit: " +
-                    profit +
-                    ""
-                );
-              }
-            }
-
-            count++;
-
-            break;
-          }
-        }
-
-        //if (ordersFilledTotal >= config.dcaMaxOrder) {
-        if (maxSafetyOrdersUsed) {
-          if (shareData.appData.verboseLog) {
-            Common.logger(
-              colors.bgYellow.bold(pair + " Max safety orders used.") +
-                "\tLast Price: $" +
-                price +
-                "\tTarget: $" +
-                currentOrder.target +
-                "\tProfit: " +
-                profit
-            );
-          }
-
-          //await Common.delay(2000);
-        }
-      }
-
-      // Delay before following again
-      await Common.delay(2000);
-
-      return { success: success, finished: finished };
-    } else {
-      if (!followFinished) {
-        if (shareData.appData.verboseLog) {
-          Common.logger("No deal ID found for " + config.pair);
-        }
-      }
-    }
-  } catch (e) {
-    success = false;
-
-    Common.logger(JSON.stringify(e));
-  }
-
-  return { success: success, finished: finished };
+
+	let configData = JSON.parse(JSON.stringify(configDataObj));
+
+	if (shareData.appData.database_error != undefined && shareData.appData.database_error != null && shareData.appData.database_error != '') {
+
+		Common.logger(colors.red.bold(shareData.appData.database_error + ' - Not processing'));
+
+		return ( { 'success': false, 'finished': false } );
+	}
+
+	if (dealTracker[dealId]['update']['deal_stop']) {
+
+		Common.logger(colors.red.bold('Deal ID ' + dealId + ' stop requested. Not processing'));
+
+		return ( { 'success': false, 'finished': true } );
+	}
+
+	if (dealTracker[dealId]['update']['deal_pause']) {
+
+		Common.logger(colors.red.bold('Deal ID ' + dealId + ' pause requested. Not processing'));
+
+		return ( { 'success': false, 'finished': false } );
+	}
+
+	if (shareData.appData.sig_int) {
+
+		Common.logger(colors.red.bold(shareData.appData.name + ' is terminating. Not processing deal ' + dealId));
+
+		return ( { 'success': false, 'finished': false } );
+	}
+
+	// Refresh config without restarting deal
+	if (dealTracker[dealId]['update'] != undefined && dealTracker[dealId]['update'] != null && dealTracker[dealId]['update']['config']) {
+
+		const configRefresh = JSON.parse(JSON.stringify(dealTracker[dealId]['update']['config']));
+
+		delete configData['dealLast'];
+	
+		if (configRefresh['dealLast']) {
+
+			configData['dealLast'] = true;
+		}
+
+		delete dealTracker[dealId]['update']['config'];
+	}
+
+	if (dealTracker[dealId]['update'] != undefined && dealTracker[dealId]['update'] != null && dealTracker[dealId]['update']['deal_sell_error']) {
+
+		let diffSec = (new Date().getTime() - new Date(dealTracker[dealId]['update']['deal_sell_error']['date']).getTime()) / 1000;
+
+		if (dealTracker[dealId]['update']['deal_sell_error']['count'] > 3 || diffSec > 30) {
+
+			delete dealTracker[dealId]['update']['deal_sell_error'];
+		}
+	}
+
+	const config = Object.freeze(JSON.parse(JSON.stringify(configData)));
+
+	let success = true;
+	let finished = false;
+
+	try {
+
+		const deal = await Deals.findOne({
+			dealId: dealId,
+			status: 0
+		});
+
+		if (deal) {
+
+			const pair = deal.pair;
+			const symbolData = await getSymbol(exchange, pair);
+			const symbol = symbolData.data;
+
+			// Error getting symbol data
+			if (symbolData.error != undefined && symbolData.error != null) {
+
+				success = false;
+
+				if (Object.keys(dealTracker).length == 0) {
+
+					//process.exit(0);
+				}
+
+				return ( { 'success': success, 'finished': finished } );
+			}
+
+			const bidPrice = symbol.bid;
+			const askPrice = symbol.ask;
+
+			const price = parseFloat(bidPrice);
+
+			let targetPrice = 0;
+
+			let orders = deal.orders;
+
+			if (deal.isStart == 0) {
+
+				const baseOrder = deal.orders[0];
+				targetPrice = baseOrder.target;
+
+				if (baseOrder.type == 'MARKET') {
+					//Send market order to exchange
+
+					if (!config.sandBox) {
+
+						const priceFiltered = await filterPrice(exchange, pair, price);
+
+						const buy = await buyOrder(exchange, dealId, pair, baseOrder.qty, priceFiltered);
+
+						if (!buy.success) {
+
+							let finished = false;
+
+							const statusObj = await orderError({ 'bot_id': config.botId, 'bot_name': config.botName, 'deal_id': dealId });
+
+							if (statusObj['success']) {
+
+								await deleteDeal(dealId);
+
+								finished = true;
+							}
+
+							return ( { 'success': false, 'finished': finished } );
+						}
+					}
+
+					orders[0].filled = 1;
+					orders[0].dateFilled = new Date();
+
+					if (shareData.appData.verboseLog) {
+
+						Common.logger(
+							colors.green.bold.italic(
+							'Pair: ' +
+							pair +
+							'\tQty: ' +
+							baseOrder.qty +
+							'\tPrice: ' +
+							baseOrder.price +
+							'\tAmount: ' +
+							baseOrder.amount +
+							'\tStatus: Filled'
+							)
+						);
+					}
+
+					let orderData = await ordersCreateTable({ 'config': config, 'orders': orders });
+
+					let t = orderData['table'];
+					let maxDeviation = orderData['max_deviation'];
+
+					//console.log(t.toString());
+					//Common.logger(t.toString());
+
+					await updateDealTracker({ 'deal_id': dealId, 'price': price, 'config': config, 'orders': orders });
+
+					await Deals.updateOne({
+						dealId: dealId
+					}, {
+						isStart: 1,
+						orders: orders
+					});
+				}
+				else {
+					//send limit order
+
+					if (price <= baseOrder.price) {
+
+						if (!config.sandBox) {
+
+							const priceFiltered = await filterPrice(exchange, pair, price);
+
+							const buy = await buyOrder(exchange, dealId, pair, baseOrder.qty, priceFiltered);
+
+							if (!buy.success) {
+
+								let finished = false;
+	
+								const statusObj = await orderError({ 'bot_id': config.botId, 'bot_name': config.botName, 'deal_id': dealId });
+	
+								if (statusObj['success']) {
+	
+									await deleteDeal(dealId);
+	
+									finished = true;
+								}
+	
+								return ( { 'success': false, 'finished': finished } );
+							}
+						}
+
+						orders[0].filled = 1;
+						orders[0].dateFilled = new Date();
+
+						if (shareData.appData.verboseLog) {
+						
+							Common.logger(
+								colors.green.bold.italic(
+								'Pair: ' +
+								pair +
+								'\tQty: ' +
+								baseOrder.qty +
+								'\tPrice: ' +
+								baseOrder.price +
+								'\tAmount: ' +
+								baseOrder.amount +
+								'\tStatus: Filled'
+								)
+							);
+						}
+
+						let orderData = await ordersCreateTable({ 'config': config, 'orders': orders });
+
+						let t = orderData['table'];
+						let maxDeviation = orderData['max_deviation'];
+
+						//console.log(t.toString());
+						//Common.logger(t.toString());
+						await updateDealTracker({ 'deal_id': dealId, 'price': price, 'config': config, 'orders': orders });
+
+						await Deals.updateOne({
+							dealId: dealId
+						}, {
+							isStart: 1,
+							orders: orders
+						});
+					}
+					else {
+
+						if (shareData.appData.verboseLog) {
+						
+							Common.logger(
+								'DCA BOT will start when price react ' +
+								baseOrder.price +
+								', now price is ' +
+								price +
+								''
+							);
+						}
+					}
+				}
+			}
+			else {
+
+				const filledOrders = deal.orders.filter(item => item.filled == 1);
+				const currentOrder = filledOrders.pop();
+
+				let profit = await Percentage.subNumsAsPerc(
+					price,
+					currentOrder.average
+				);
+
+				profit = Number(profit).toFixed(2);
+				let profitPerc = profit;
+
+				profit =
+					profit > 0 ?
+					colors.green.bold(profit + '%') :
+					colors.red.bold(profit + '%');
+
+				let count = 0;
+				let maxSafetyOrdersUsed = false;
+				let ordersFilledTotal = filledOrders.length;
+
+				if (ordersFilledTotal >= (orders.length - 1)) {
+
+					maxSafetyOrdersUsed = true;
+				}
+
+				for (let i = 0; i < orders.length; i++) {
+
+					const order = orders[i];
+
+					// Check if max safety orders used, otherwise sell order condition will not be checked
+					if (order.filled == 0 || maxSafetyOrdersUsed) {
+					//if (order.filled == 0) {
+
+						if (price <= parseFloat(order.price) && order.filled == 0) {
+							//Buy DCA
+
+							if (!config.sandBox) {
+
+								const priceFiltered = await filterPrice(exchange, pair, price);
+
+								const buy = await buyOrder(exchange, dealId, pair, order.qty, priceFiltered);
+
+								if (!buy.success) {
+
+									return ( { 'success': false, 'finished': false } );
+								}
+							}
+
+							if (shareData.appData.verboseLog) {
+		
+								Common.logger(
+									colors.blue.bold.italic(
+									'Pair: ' +
+									pair +
+									'\tQty: ' +
+									currentOrder.qtySum +
+									'\tLast Price: $' +
+									price +
+									'\tDCA Price: $' +
+									currentOrder.average +
+									'\tSell Price: $' +
+									currentOrder.target +
+									'\tStatus: ' +
+									colors.green('BUY') +
+									'' +
+									'\tProfit: ' +
+									profit +
+									''
+									)
+								);
+							}
+
+							orders[i].filled = 1;
+							orders[i].dateFilled = new Date();
+
+							await updateDealTracker({ 'deal_id': dealId, 'price': price, 'config': config, 'orders': orders });
+
+							await Deals.updateOne({
+								dealId: dealId
+							}, {
+								orders: orders
+							});
+						}
+						else if (price >= parseFloat(currentOrder.target) || dealTracker[dealId]['update']['deal_cancel'] || dealTracker[dealId]['update']['deal_panic_sell']) {
+
+							//Sell order
+							if (dealTracker[dealId]['update']['deal_sell_error'] == undefined || dealTracker[dealId]['update']['deal_sell_error'] == null) {
+
+								dealTracker[dealId]['update']['deal_sell_error'] = {};
+								dealTracker[dealId]['update']['deal_sell_error']['count'] = 0;
+								dealTracker[dealId]['update']['deal_sell_error']['date'] = new Date();
+							}
+
+							if (deal.isStart == 1) {
+
+								let canceled = false;
+								let panicSell = false;
+								let sellSuccess = true;
+
+								const feeData = await calculateExchangeFees(pair, price, exchange, config, currentOrder, (0.005 * dealTracker[dealId]['update']['deal_sell_error']['count']));
+
+								const qtySumSell = feeData['dcaOrderQtySumNet'];
+								const priceFiltered = feeData['priceFiltered'];
+
+								if (dealTracker[dealId]['update']['deal_cancel']) {
+
+									canceled = true;
+								}
+
+								if (dealTracker[dealId]['update']['deal_panic_sell']) {
+
+									panicSell = true;
+								}
+
+								if (!config.sandBox && !canceled) {
+
+									const sell = await sellOrder(exchange, dealId, pair, qtySumSell, priceFiltered);
+
+									if (!sell.success) {
+
+										sellSuccess = false;
+									}
+								}
+
+								if (sellSuccess) {
+
+									await updateDealTracker({ 'deal_id': dealId, 'price': price, 'config': config, 'orders': orders });
+
+									if (shareData.appData.verboseLog) {
+
+										Common.logger(
+											colors.blue.bold.italic(
+											'Pair: ' +
+											pair +
+											'\tQty: ' +
+											currentOrder.qtySum +
+											'\tLast Price: $' +
+											price +
+											'\tDCA Price: $' +
+											currentOrder.average +
+											'\tSell Price: $' +
+											currentOrder.target +
+											'\tStatus: ' +
+											colors.red('SELL') +
+											'' +
+											'\tProfit: ' +
+											profit +
+											''
+											)
+										);
+									}
+
+									const sellData = {
+														'date': new Date(),
+														'qtySum': currentOrder.qtySum,
+														'qtySumSell': qtySumSell,
+														'price': price,
+														'average': currentOrder.average,
+														'target': currentOrder.target,
+														'profit': profitPerc,
+														'feeData': feeData
+													 };
+
+									await Deals.updateOne({
+										dealId: dealId
+									}, {
+										'sellData': sellData,
+										'panicSell': panicSell,
+										'canceled': canceled,
+										'status': 1
+									});
+
+									finished = true;
+
+									await deleteDealTracker(dealId);
+
+									if (shareData.appData.verboseLog) { Common.logger(colors.bgRed('Deal ID ' + dealId + ' DCA Bot Finished.')); }
+
+									sendNotificationFinish(config.botName, dealId, pair, sellData);
+								}
+								else {
+
+									// Sell failed
+									dealTracker[dealId]['update']['deal_sell_error']['count']++;
+									dealTracker[dealId]['update']['deal_sell_error']['date'] = new Date();
+
+									await Common.delay(1000);
+								}
+
+								success = true;
+
+								return ( { 'success': success, 'finished': finished } );
+							}
+						}
+						else {
+
+							await updateDealTracker({ 'deal_id': dealId, 'price': price, 'config': config, 'orders': orders });
+
+							if (shareData.appData.verboseLog) {
+							
+								Common.logger(
+								'Pair: ' +
+								pair +
+								'\tLast Price: $' +
+								price +
+								'\tDCA Price: $' +
+								currentOrder.average +
+								'\t\tTarget: $' +
+								currentOrder.target +
+								'\t\tNext Order: $' +
+								order.price +
+								'\tProfit: ' +
+								profit +
+								''
+								);
+							}
+						}
+
+						count++;
+
+						break;
+					}
+				}
+
+				//if (ordersFilledTotal >= config.dcaMaxOrder) {
+				if (maxSafetyOrdersUsed) {
+
+					if (shareData.appData.verboseLog) { Common.logger( colors.bgYellow.bold(pair + ' Max safety orders used.') + '\tLast Price: $' + price + '\tTarget: $' + currentOrder.target + '\tProfit: ' + profit); }
+					
+					//await Common.delay(2000);
+				}
+
+			}
+
+			// Delay before following again
+			await Common.delay(2000);
+
+			return ( { 'success': success, 'finished': finished } );
+		}
+		else {
+
+			if (!followFinished) {
+
+				if (shareData.appData.verboseLog) { Common.logger('No deal ID found for ' + config.pair); }
+			}
+		}
+	}
+	catch (e) {
+
+		success = false;
+
+		Common.logger(JSON.stringify(e));
+	}
+
+	return ( { 'success': success, 'finished': finished } );
 };
+
 
 const getSymbolsAll = async (exchange) => {
-  let errMsg;
 
-  let symbols = [];
-  let success = true;
-  try {
-    const markets = await exchange.loadMarkets();
-    symbols = exchange.symbols;
-  } catch (e) {
-    success = false;
+	let errMsg;
 
-    let symbolError = e;
-    let msg = "";
+	let symbols = [];
+	let success = true;
 
-    if (symbolError.message != undefined && symbolError.message != null) {
-      msg = " " + symbolError.message;
-    }
+	try {
 
-    symbolError = JSON.stringify(symbolError) + msg;
+		const markets = await exchange.loadMarkets();
+		symbols = exchange.symbols;
+	}
+	catch(e) {
 
-    errMsg = "Unable to get symbols: " + symbolError;
+		success = false;
 
-    Common.logger(colors.bgRed.bold.italic(errMsg));
-  }
+		let symbolError = e;
+		let msg = '';
 
-  return { date: new Date(), success: success, symbols: symbols, msg: errMsg };
-};
+		if (symbolError.message != undefined && symbolError.message != null) {
+
+			msg = ' ' + symbolError.message;
+		}
+
+		symbolError = JSON.stringify(symbolError) + msg;
+
+		errMsg = 'Unable to get symbols: ' + symbolError;
+
+		Common.logger(colors.bgRed.bold.italic(errMsg));
+	}
+
+	return ( { 'date': new Date(), 'success': success, 'symbols': symbols, 'msg': errMsg } );
+}
+
 
 const getSymbol = async (exchange, pair) => {
-  const maxTries = 5;
 
-  let symbolData;
-  let symbolError;
+	const maxTries = 5;
 
-  let success = false;
-  let finished = false;
-  let symbolInvalid = false;
+	let symbolData;
+	let symbolError;
 
-  let count = 0;
+	let success = false;
+	let finished = false;
+	let symbolInvalid = false;
 
-  while (!finished) {
-    // Clear error
-    symbolError = undefined;
+	let count = 0;
 
-    try {
-      const symbol = await exchange.fetchTicker(pair);
-      symbolData = symbol;
+	while (!finished) {
 
-      finished = true;
-    } catch (e) {
-      symbolError = e;
-      
-      if (typeof symbolError != 'string') {
-      
-      	let msg = '';
-      
-      	if (symbolError.message != undefined && symbolError.message != null) {
-      
-      		msg = ' ' + symbolError.message;
-      	}
-      
-      	symbolError = JSON.stringify(symbolError) + msg;
-      }
-      
-      symbolError = 'Get symbol ' + pair + ' error: ' + symbolError;
-      
-      Common.logger(colors.bgRed.bold.italic(symbolError));
-      
-      if (e instanceof ccxt.RateLimitExceeded && count < maxTries) {
-      
-      	// Delay and try again
-      	await Common.delay(1000 + (Math.random() * 100));
-      }
-      else if (e instanceof ccxt.ExchangeNotAvailable) {
-      
-      	finished = true;
-      }
-      else if (e instanceof ccxt.BadSymbol) {
-      
-      	symbolInvalid = true;
-      
-      	finished = true;
-      }
-      else {
-      
-      	finished = true;
-      }
-      
+		// Clear error
+		symbolError = undefined;
 
-      finished = true;
-      count++;
-    }
-  }
+		try {
 
-  if (symbolError == undefined || symbolError == null || symbolError == "") {
-    success = true;
-  }
+			const symbol = await exchange.fetchTicker(pair);
+			symbolData = symbol;
 
-  return {
-    date: new Date(),
-    success: success,
-    data: symbolData,
-    invalid: symbolInvalid,
-    error: symbolError,
-  };
+			finished = true;
+		}
+		catch (e) {
+
+			symbolError = e;
+
+			if (typeof symbolError != 'string') {
+
+				let msg = '';
+
+				if (symbolError.message != undefined && symbolError.message != null) {
+
+					msg = ' ' + symbolError.message;
+				}
+
+				symbolError = JSON.stringify(symbolError) + msg;
+			}
+
+			symbolError = 'Get symbol ' + pair + ' error: ' + symbolError;
+
+			Common.logger(colors.bgRed.bold.italic(symbolError));
+
+			if (e instanceof ccxt.RateLimitExceeded && count < maxTries) {
+
+				// Delay and try again
+				await Common.delay(1000 + (Math.random() * 100));
+			}
+			else if (e instanceof ccxt.ExchangeNotAvailable) {
+
+				finished = true;
+			}
+			else if (e instanceof ccxt.BadSymbol) {
+
+				symbolInvalid = true;
+
+				finished = true;
+			}
+			else {
+
+				finished = true;
+			}
+
+			count++;
+		}
+	}
+
+	if (symbolError == undefined || symbolError == null || symbolError == '') {
+
+		success = true;
+	}
+
+	return ( { 'date': new Date(), 'success': success, 'data': symbolData, 'invalid': symbolInvalid, 'error': symbolError } );
 };
+
 
 const filterAmount = async (exchange, pair, amount) => {
-  try {
-    return exchange.amountToPrecision(pair, amount);
-  } catch (e) {
-    Common.logger(JSON.stringify(e));
 
-    return false;
-  }
+	try {
+
+		return exchange.amountToPrecision(pair, amount);
+	}
+	catch (e) {
+
+		Common.logger(JSON.stringify(e));
+
+		return false;
+	}
 };
+
 
 const filterPrice = async (exchange, pair, price) => {
-  try {
-    return exchange.priceToPrecision(pair, price);
-  } catch (e) {
-    Common.logger(JSON.stringify(e));
 
-    return false;
-  }
+	try {
+
+		return exchange.priceToPrecision(pair, price);
+	}
+	catch (e) {
+
+		Common.logger(JSON.stringify(e));
+
+		return false;
+	}
 };
+
 
 const checkActiveDeal = async (botId, pair) => {
-  try {
-    const deal = await Deals.findOne({
-      botId: botId,
-      pair: pair,
-      status: 0,
-    });
 
-    return deal;
-  } catch (e) {
-    Common.logger(JSON.stringify(e));
-  }
+	try {
+
+		const deal = await Deals.findOne({
+			botId: botId,
+			pair: pair,
+			status: 0
+		});
+
+		return deal;
+	}
+	catch (e) {
+
+		Common.logger(JSON.stringify(e));
+	}
 };
+
 
 const getDeals = async (query, options) => {
-  if (query == undefined || query == null) {
-    query = {};
-  }
 
-  if (options == undefined || options == null) {
-    options = {};
-  }
+	if (query == undefined || query == null) {
 
-  try {
-    const deals = await Deals.find(query, {}, options);
+		query = {};
+	}
 
-    return deals;
-  } catch (e) {
-    Common.logger(JSON.stringify(e));
-  }
+	if (options == undefined || options == null) {
+
+		options = {};
+	}
+
+	try {
+
+		const deals = await Deals.find(query, {}, options);
+
+		return deals;
+	}
+	catch (e) {
+
+		Common.logger(JSON.stringify(e));
+	}
 };
+
 
 const getBots = async (query) => {
-  if (query == undefined || query == null) {
-    query = {};
-  }
 
-  try {
-    const bots = await Bots.find(query);
+	if (query == undefined || query == null) {
 
-    return bots;
-  } catch (e) {
-    Common.logger(JSON.stringify(e));
-  }
+		query = {};
+	}
+
+
+	try {
+
+		const bots = await Bots.find(query);
+
+		return bots;
+	}
+	catch (e) {
+
+		Common.logger(JSON.stringify(e));
+	}
 };
 
+		
 const getBalance = async (exchange, symbol) => {
-  let success = true;
 
-  let balance;
-  let balanceObj;
-  let errMsg;
+	let success = true;
 
-  try {
-    balanceObj = await exchange.fetchBalance();
-    balance = balanceObj[symbol].free;
-  } catch (e) {
-    errMsg = e;
+	let balance;
+	let balanceObj;
+	let errMsg;
 
-    if (typeof errMsg != "string") {
-      errMsg = JSON.stringify(errMsg);
-    }
+	try {
 
-    Common.logger(errMsg);
+		balanceObj = await exchange.fetchBalance();
+		balance = balanceObj[symbol].free;
+	}
+	catch (e) {
 
-    success = false;
-  }
+		errMsg = e;
+		
+		if (typeof errMsg != 'string') {
 
-  return { success: success, balance: parseFloat(balance), error: errMsg };
+			errMsg = JSON.stringify(errMsg);
+		}
+
+		Common.logger(errMsg);
+
+		success = false;
+	}
+
+	return ( { 'success': success, 'balance': parseFloat(balance), 'error': errMsg } );
 };
 
-// Fetch order status
-async function openWatchDog(orderId, price, pair, exchange) {
-  try {
-    const delay = 100; // 5 seconds
-    while (true) {
-      let inc = 0;
 
-      const order = await exchange.fetchOrder(orderId, pair);
-      console.log(`Order Status ${inc} for Order ID ${orderId} & for the pair ${pair} at${price}: ${order.status}`);
-
-      // Check if the order is closed or filled
-      if (order.status === "closed" || order.status === "filled") {
-        return { success: true, order: order };
-      }
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  } catch (error) {
-    console.error("Error tracking order status:", error.message);
-  }
-}
-
-// BuyOrder function for market orders
 const buyOrder = async (exchange, dealId, pair, qty, price) => {
-  let msg;
-  let order;
-  let isErr;
-  let success;
-  try {
-    order = await exchange.createOrder(pair, "market", "buy", qty, price);
-    success = true;
-    msg = "BUY SUCCESS";
-  } catch (e) {
-    isErr = e;
-    success = false;
 
-    msg = "BUY ERROR: " + e.name + " " + e.message;
-  }
+	let msg;
+	let order;
+	let isErr;
+	let success;
 
-  const dataObj = {
-    date: new Date(),
-    success: success,
-    data: order,
-    error: isErr,
-    message: msg,
-    deal_id: dealId,
-    pair: pair,
-    quantity: qty,
-    price: price,
-  };
+	try {
 
-  Common.logger(dataObj);
+		success = true;
+		msg = 'BUY SUCCESS';
 
-  return dataObj;
+		order = await exchange.createOrder(pair, 'market', 'buy', qty, price);
+	}
+	catch (e) {
+
+		isErr = e;
+		success = false;
+
+		msg = 'BUY ERROR: ' + e.name + ' ' + e.message;
+	}
+
+	const dataObj = {
+						'date': new Date(),
+						'success': success,
+						'data': order,
+						'error': isErr,
+						'message': msg,
+						'deal_id': dealId,
+						'pair': pair,
+						'quantity': qty,
+						'price': price
+					};
+
+	Common.logger(dataObj);
+
+	return dataObj;
 };
 
-// buyLimitOrder function for market orders
-const buyLimitOrder = async (exchange, dealId, pair, qty, price) => {
-  let msg;
-  let order;
-  let isErr;
-  let success;
-
-  try {
-    order = await exchange.createOrder(pair, "limit", "buy", qty, price);
-    if (order.status === "open" || order.status === "OPEN") {
-      let result = await openWatchDog(
-        order.id,
-        order.price,
-        order.symbol,
-        exchange
-      );
-
-      if (result.success) {
-        success = true;
-        msg = "BUY SUCCESS";
-
-        const dataObj = {
-          date: new Date(),
-          success: success,
-          data: result.order,
-          error: isErr,
-          message: msg,
-          deal_id: dealId,
-          pair: pair,
-          quantity: qty,
-          price: price,
-        };
-
-        Common.logger(dataObj);
-
-        return dataObj;
-      }
-    }
-  } catch (e) {
-    isErr = e;
-    success = false;
-
-    msg = "BUY ERROR: " + e.name + " " + e.message;
-  }
-};
 
 const sellOrder = async (exchange, dealId, pair, qty, price) => {
-  let msg;
-  let order;
-  let isErr;
-  let success;
 
-  try {
-    success = true;
-    msg = "SELL SUCCESS";
+	let msg;
+	let order;
+	let isErr;
+	let success;
 
-    order = await exchange.createOrder(pair, "market", "sell", qty, price);
-  } catch (e) {
-    isErr = e;
-    success = false;
+	try {
 
-    msg = "SELL ERROR: " + e.name + " " + e.message;
-  }
+		success = true;
+		msg = 'SELL SUCCESS';
 
-  const dataObj = {
-    date: new Date(),
-    success: success,
-    data: order,
-    error: isErr,
-    message: msg,
-    deal_id: dealId,
-    pair: pair,
-    quantity: qty,
-    price: price,
-  };
+		order = await exchange.createOrder(pair, 'market', 'sell', qty, price);
+	}
+	catch (e) {
 
-  Common.logger(dataObj);
+		isErr = e;
+		success = false;
 
-  return dataObj;
+		msg = 'SELL ERROR: ' + e.name + ' ' + e.message;
+	}
+
+	const dataObj = {
+						'date': new Date(),
+						'success': success,
+						'data': order,
+						'error': isErr,
+						'message': msg,
+						'deal_id': dealId,
+						'pair': pair,
+						'quantity': qty,
+						'price': price
+					};
+
+	Common.logger(dataObj);
+
+	return dataObj;
 };
+
 
 const getDeviation = async (a, b) => {
-  return Math.abs((a - b) / ((a + b) / 2)) * 100;
-};
 
-const getDeviationDca = async (
-  dcaOrderStepPercent,
-  dcaOrderStepPercentMultiplier,
-  dcaMaxOrder
-) => {
-  let maxDeviation;
+	return (Math.abs( (a - b) / ( (a + b) / 2 ) ) * 100);
+}
 
-  if (Number(dcaOrderStepPercentMultiplier) == 1) {
-    maxDeviation = Number(dcaMaxOrder) * Number(dcaOrderStepPercent);
-  } else {
-    maxDeviation =
-      (Number(dcaOrderStepPercent) *
-        (1 - Number(dcaOrderStepPercentMultiplier) ** Number(dcaMaxOrder))) /
-      (1 - Number(dcaOrderStepPercentMultiplier));
-  }
 
-  return maxDeviation;
-};
+const getDeviationDca = async (dcaOrderStepPercent, dcaOrderStepPercentMultiplier, dcaMaxOrder) => {
 
-const calculateExchangeFees = async (
-  pair,
-  price,
-  exchange,
-  configObj,
-  orderObj,
-  addFee
-) => {
-  const config = JSON.parse(JSON.stringify(configObj));
-  const currentOrder = JSON.parse(JSON.stringify(orderObj));
+	let maxDeviation;
 
-  const priceFiltered = await filterPrice(exchange, pair, price);
+	if (Number(dcaOrderStepPercentMultiplier) == 1) {
 
-  // Calculate total fees amount and quantity
-  const dcaOrderSum = currentOrder.sum;
-  const dcaOrderQtySum = currentOrder.qtySum;
+		maxDeviation = Number(dcaMaxOrder) * Number(dcaOrderStepPercent);
+	}
+	else {
 
-  if (addFee == undefined || addFee == null) {
-    addFee = 0;
-  }
+		maxDeviation = Number(dcaOrderStepPercent) * (1 - Number(dcaOrderStepPercentMultiplier) ** Number(dcaMaxOrder)) / (1 - Number(dcaOrderStepPercentMultiplier));
+	}
 
-  const exchangeFeeSum = await filterPrice(
-    exchange,
-    pair,
-    (dcaOrderSum / 100) * (Number(config.exchangeFee) + Number(addFee))
-  );
+	return maxDeviation;
+}
 
-  let exchangeFeeQtySum = exchangeFeeSum / priceFiltered;
 
-  exchangeFeeQtySum = await filterAmount(exchange, pair, exchangeFeeQtySum);
+const calculateExchangeFees = async (pair, price, exchange, configObj, orderObj, addFee) => {
 
-  if (!exchangeFeeQtySum) {
-    exchangeFeeQtySum = 0;
-  }
+	const config = JSON.parse(JSON.stringify(configObj));
+	const currentOrder = JSON.parse(JSON.stringify(orderObj));
 
-  const dcaOrderSumNet = await filterPrice(
-    exchange,
-    pair,
-    dcaOrderSum - exchangeFeeSum
-  );
-  const dcaOrderQtySumNet = await filterAmount(
-    exchange,
-    pair,
-    dcaOrderQtySum - exchangeFeeQtySum
-  );
+	const priceFiltered = await filterPrice(exchange, pair, price);
 
-  const obj = {
-    dcaOrderSum: dcaOrderSum,
-    dcaOrderQtySum: dcaOrderQtySum,
-    dcaOrderSumNet: dcaOrderSumNet,
-    dcaOrderQtySumNet: dcaOrderQtySumNet,
-    exchangeFeeSum: exchangeFeeSum,
-    exchangeFeeQtySum: exchangeFeeQtySum,
-    priceFiltered: priceFiltered,
-  };
+	// Calculate total fees amount and quantity
+	const dcaOrderSum = currentOrder.sum;
+	const dcaOrderQtySum = currentOrder.qtySum;
 
-  return obj;
-};
+	if (addFee == undefined || addFee == null) {
+
+		addFee = 0;
+	}
+
+	const exchangeFeeSum = await filterPrice(exchange, pair, (dcaOrderSum / 100) * (Number(config.exchangeFee) + Number(addFee)));
+
+	let exchangeFeeQtySum = exchangeFeeSum / priceFiltered;
+
+	exchangeFeeQtySum = await filterAmount(exchange, pair, exchangeFeeQtySum);
+
+	if (!exchangeFeeQtySum) {
+
+		exchangeFeeQtySum = 0;
+	}
+
+	const dcaOrderSumNet = await filterPrice(exchange, pair, (dcaOrderSum - exchangeFeeSum));
+	const dcaOrderQtySumNet = await filterAmount(exchange, pair, (dcaOrderQtySum - exchangeFeeQtySum));
+
+	const obj = {
+					'dcaOrderSum': dcaOrderSum,
+					'dcaOrderQtySum': dcaOrderQtySum,
+					'dcaOrderSumNet': dcaOrderSumNet,
+					'dcaOrderQtySumNet': dcaOrderQtySumNet,
+					'exchangeFeeSum': exchangeFeeSum,
+					'exchangeFeeQtySum': exchangeFeeQtySum,
+					'priceFiltered': priceFiltered
+				};
+
+	return obj;
+}
+
 
 async function connectExchange(configObj) {
-  const config = JSON.parse(JSON.stringify(configObj));
 
-  let exchange;
-  let options = { defaultType: "spot" };
+	const config = JSON.parse(JSON.stringify(configObj));
 
-  try {
+	let exchange;
+	let options = { 'defaultType': 'spot' };
 
-    console.log("config exchange", config.exchange);
-    if (
-      config.exchangeOptions != undefined &&
-      config.exchangeOptions != null &&
-      config.exchangeOptions != ""
-    ) {
-      options = config.exchangeOptions;
-    }
+	try {
 
-    if (
-      shareData.appData.exchanges[config.exchange] != undefined &&
-      shareData.appData.exchanges[config.exchange] != null
-    ) {
-      exchange = shareData.appData.exchanges[config.exchange];
-    } else {
-      if (config.exchange == "binance" || config.exchange == "BINANCE") {
-        exchange = new ccxt[config.exchange]({
-          enableRateLimit: true,
-          apiKey: config.apiKey,
-          secret: config.apiSecret,
-          passphrase: config.apiPassphrase,
-          password: config.apiPassword,
-          options: options,
-        });
-        
-        exchange.setSandboxMode(true); //it will activate Test modes
-        await exchange.loadMarkets();
-      } 
-      else if(config.exchange == "bybit" || config.exchange == "BYBIT"){
-        exchange = new ccxt[config.exchange]({
-          enableRateLimit: true,
-          apiKey: config.apiKey,
-          secret: config.apiSecret,
-          passphrase: config.apiPassphrase,
-          password: config.apiPassword,
-          options: options,
-        });
-        
-        exchange.setSandboxMode(true); //it will activate Test modes
-        const ex= await exchange.fetchBalance()
-        const usdt=await  ex.BTC
-        await exchange.loadMarkets();
-        
-      }
+		if (config.exchangeOptions != undefined && config.exchangeOptions != null && config.exchangeOptions != '') {
 
-      else if(config.exchange == "okx" || config.exchange == "OKX"){
-        console.log("in okx")
-        
-        // exchange = new ccxt[config.exchange]({
-        //   enableRateLimit: true,
-        //   apiKey: config.apiKey,
-        //   secret: config.apiSecret,
-        //   passphrase: config.apiPassphrase,
-        //   password: config.apiPassword,
-        //   options: options,
-        // });
+			options = config.exchangeOptions;
+		}
 
-        exchange = new ccxt.pro[config.exchange]({
-          // enableRateLimit: true,
-          
-          apiKey: "45d84ddd-d366-41f3-ab0d-366d0135657a",
-          secret: "373D7B04FEDE63B0E0424666D98B56DD",
-          
-          // passphrase: config.apiPassphrase,
-          
-          password: "Mraj@1802",
-          options: options,
-        });
+		if (shareData.appData.exchanges[config.exchange] != undefined && shareData.appData.exchanges[config.exchange] != null) {
 
-        exchange.setSandboxMode(true);
+			exchange = shareData.appData.exchanges[config.exchange];
+		}
+		else {
 
-        // console.log("exchange", exchange);
-        
-        const balance= await exchange.fetchBalance();
-        console.log("balance is:", balance.USDT);
-        await exchange.loadMarkets();
-        
+			exchange = new ccxt.pro[config.exchange]({
 
-        exchange.setSandboxMode(true); //it will activate Test modes
-        // const usdt=await  balance.BTC;
-        console.log("--------");
-        const symbols = await exchange.getSymbol();
-        
-        console.log("sym", symbols);
-        // console.log("balance is", balance);
-      }
-      
-      else if(config.exchange == "bitmex" || config.exchange == "BITMEX"){
-      
-        exchange = new ccxt.pro[config.exchange]({
-          enableRateLimit: true,
-          apiKey: config.apiKey,
-          secret: config.apiSecret,
-          passphrase: config.apiPassphrase,
-          password: config.apiPassword,
-          options: options,
-        });
-        
-        exchange.setSandboxMode(true); //it will activate Test modes
-        const ex= await exchange.fetchBalance()
-        const BTC=await  ex.BTC
-        const usdt=await ex.USDT
-        // console.log("----------------2",BTC,usdt);
-        await exchange.loadMarkets();
-      }
-      else {
-        exchange = new ccxt.pro[config.exchange]({
-          enableRateLimit: true,
-          apiKey: config.apiKey,
-          secret: config.apiSecret,
-          passphrase: config.apiPassphrase,
-          password: config.apiPassword,
-          options: options,
-        });
+				'enableRateLimit': true,
+				'apiKey': config.apiKey,
+				'secret': config.apiSecret,
+				'passphrase': config.apiPassphrase,
+				'password': config.apiPassword,
+				'options': options
+			});
 
-        // exchange = new ccxt.pro[config.exchange]({
-        //   enableRateLimit: true,
-        //   apiKey: config.apiKey,
-        //   secret: config.apiSecret,
-        //   passphrase: config.apiPassphrase,
-        //   password: config.apiPassword,
-        //   options: options,
-        // });
-        
-        // exchange.setSandboxMode(true); //it will activate Test modes
-        // const ex= await exchange.fetchBalance()
-        // const BTC=await  ex.BTC
-        // const usdt=await ex.USDT
-        // console.log("----------------2",BTC,usdt);
-        // await exchange.loadMarkets();
-      }
-      shareData.appData.exchanges[config.exchange] = exchange;
-    }
-  } catch (e) {
-    let msg = "Connect exchange error: " + e;
-    // console.log(msg);
-    Common.logger(msg);
+			shareData.appData.exchanges[config.exchange] = exchange;
+		}
+	}
+	catch(e) {
 
-    Common.sendNotification({
-      message: msg,
-      type: "error",
-      telegram_id: shareData.appData.telegram_id,
-    });
+		let msg = 'Connect exchange error: ' + e;
 
-    delete shareData.appData.exchanges[config.exchange];
-  }
+		Common.logger(msg);
 
-  return exchange;
+		Common.sendNotification({ 'message': msg, 'type': 'error', 'telegram_id': shareData.appData.telegram_id });
+
+		delete shareData.appData.exchanges[config.exchange];
+	}
+
+	return exchange;
 }
+
 
 async function orderError(data) {
-  let active = false;
-  let success = true;
 
-  let botId = data["bot_id"];
-  let botName = data["bot_name"];
-  let dealId = data["deal_id"];
+	let active = false;
+	let success = true;
 
-  const dataBot = await updateBot(botId, { active: active });
+	let botId = data['bot_id'];
+	let botName = data['bot_name'];
+	let dealId = data['deal_id'];
 
-  if (!dataBot.success) {
-    success = false;
-  }
+	const dataBot = await updateBot(botId, { 'active': active });
 
-  if (success) {
-    let msg =
-      "An error occurred starting deal ID " +
-      dealId +
-      ". Disabling bot. Check the logs for details.";
+	if (!dataBot.success) {
 
-    await Common.sendNotification({
-      message: msg,
-      type: "deal_error",
-      telegram_id: shareData.appData.telegram_id,
-    });
-    const statusObj = await sendBotStatus({
-      bot_id: botId,
-      bot_name: botName,
-      active: active,
-      success: success,
-    });
-  }
+		success = false;
+	}
 
-  return { success: success };
+	if (success) {
+
+		let msg = 'An error occurred starting deal ID ' + dealId + '. Disabling bot. Check the logs for details.';
+
+		await Common.sendNotification({ 'message': msg, 'type': 'deal_error', 'telegram_id': shareData.appData.telegram_id });
+		const statusObj = await sendBotStatus({ 'bot_id': botId, 'bot_name': botName, 'active': active, 'success': success });
+	}
+
+	return ( { 'success': success } );
 }
+
 
 async function sendBotStatus(data) {
-  let status;
 
-  let botId = data["bot_id"];
-  let botName = data["bot_name"];
-  let active = data["active"];
-  let success = data["success"];
+	let status;
 
-  if (active) {
-    status = "enabled";
-  } else {
-    status = "disabled";
-  }
+	let botId = data['bot_id'];
+	let botName = data['bot_name'];
+	let active = data['active'];
+	let success = data['success'];
 
-  Common.logger(
-    "Bot Status Changed: ID: " +
-      botId +
-      " / Status: " +
-      status +
-      " / Success: " +
-      success
-  );
+	if (active) {
 
-  if (success) {
-    let msg = botName + " is now " + status;
+		status = 'enabled';
+	}
+	else {
+	
+		status = 'disabled';
+	}
 
-    Common.sendNotification({
-      message: msg,
-      type: "bot_" + status.toLowerCase(),
-      telegram_id: shareData.appData.telegram_id,
-    });
-  }
+	Common.logger('Bot Status Changed: ID: ' + botId + ' / Status: ' + status + ' / Success: ' + success);
 
-  return { status: status };
+	if (success) {
+
+		let msg = botName + ' is now ' + status;
+
+		Common.sendNotification({ 'message': msg, 'type': 'bot_' + status.toLowerCase(), 'telegram_id': shareData.appData.telegram_id });
+	}
+
+	return ( { 'status': status } );
 }
+
 
 async function updateBot(botId, data) {
-  let botData;
-  let success = true;
 
-  try {
-    botData = await Bots.updateOne(
-      {
-        botId: botId,
-      },
-      data
-    );
-  } catch (e) {
-    success = false;
+	let botData;
+	let success = true;
 
-    Common.logger(JSON.stringify(e));
-  }
+	try {
 
-  if (botData == undefined || botData == null || botData["matchedCount"] < 1) {
-    success = false;
-  }
+		botData = await Bots.updateOne({
+						botId: botId
+					}, data);
+	}
+	catch (e) {
 
-  return { success: success };
+		success = false;
+
+		Common.logger(JSON.stringify(e));
+	}
+
+
+	if (botData == undefined || botData == null || botData['matchedCount'] < 1) {
+
+		success = false;
+	}
+
+	return( { 'success': success } );
 }
+
 
 async function updateDeal(botId, dealId, data) {
-  let dealData;
-  let success = true;
 
-  try {
-    dealData = await Deals.updateOne(
-      {
-        botId: botId,
-        dealId: dealId,
-      },
-      data
-    );
-  } catch (e) {
-    success = false;
+	let dealData;
+	let success = true;
 
-    Common.logger(JSON.stringify(e));
-  }
+	try {
 
-  if (
-    dealData == undefined ||
-    dealData == null ||
-    dealData["matchedCount"] < 1
-  ) {
-    success = false;
-  }
+		dealData = await Deals.updateOne({
+						botId: botId,
+						dealId: dealId
+					}, data);
+	}
+	catch (e) {
 
-  return { success: success };
+		success = false;
+
+		Common.logger(JSON.stringify(e));
+	}
+
+
+	if (dealData == undefined || dealData == null || dealData['matchedCount'] < 1) {
+
+		success = false;
+	}
+
+	return( { 'success': success } );
 }
+
 
 async function deleteDeal(dealId) {
-  let dealData;
-  let success = true;
 
-  // console.log("enter Deletedeal function");
-  try {
-    dealData = await Deals.deleteOne({
-      dealId: dealId,
-    });
-  } catch (e) {
-    success = false;
+	let dealData;
+	let success = true;
 
-    Common.logger(JSON.stringify(e));
-  }
+	try {
 
-  if (
-    dealData == undefined ||
-    dealData == null ||
-    dealData["deletedCount"] < 1
-  ) {
-    success = false;
-  }
+		dealData = await Deals.deleteOne({
+						dealId: dealId
+					});
+	}
+	catch (e) {
 
-  return { success: success };
+		success = false;
+
+		Common.logger(JSON.stringify(e));
+	}
+
+	if (dealData == undefined || dealData == null || dealData['deletedCount'] < 1) {
+
+		success = false;
+	}
+
+	return( { 'success': success } );
 }
+
 
 async function updateOrders(data) {
-  let orderData = JSON.parse(JSON.stringify(data));
 
-  let ordersOrig = orderData["orig"];
-  let orderSteps = orderData["new"];
+	let orderData = JSON.parse(JSON.stringify(data));
 
-  let ordersNew = [];
+	let ordersOrig = orderData['orig'];
+	let orderSteps = orderData['new'];
 
-  for (let i = 0; i < orderSteps.length; i++) {
-    let orderNew;
+	let ordersNew = [];
 
-    let priceTargetNew = orderSteps[i][4].replace(/[^0-9.]/g, "");
+	for (let i = 0; i < orderSteps.length; i++) {
 
-    // Use existing order data if available
-    if (ordersOrig[i] != undefined && ordersOrig[i] != null) {
-      let priceTargetOrig = ordersOrig[i]["target"];
+		let orderNew;
 
-      orderNew = ordersOrig[i];
+		let priceTargetNew = orderSteps[i][4].replace(/[^0-9.]/g, '');
 
-      orderNew["target"] = priceTargetNew;
-    } else {
-      let orderObj = {
-        orderNo: orderSteps[i][0],
-        price: orderSteps[i][2].replace(/[^0-9.]/g, ""),
-        average: orderSteps[i][3].replace(/[^0-9.]/g, ""),
-        target: priceTargetNew,
-        qty: orderSteps[i][5].replace(/[^0-9.]/g, ""),
-        amount: orderSteps[i][6].replace(/[^0-9.]/g, ""),
-        qtySum: orderSteps[i][7].replace(/[^0-9.]/g, ""),
-        sum: orderSteps[i][8].replace(/[^0-9.]/g, ""),
-        type: orderSteps[i][9],
-        filled: 0,
-      };
+		// Use existing order data if available
+		if (ordersOrig[i] != undefined && ordersOrig[i] != null) {
 
-      orderNew = orderObj;
-    }
+			let priceTargetOrig = ordersOrig[i]['target'];
 
-    ordersNew.push(orderNew);
-  }
+			orderNew = ordersOrig[i];
 
-  return ordersNew;
+			orderNew['target'] = priceTargetNew;
+		}
+		else {
+
+			let orderObj = {
+								orderNo: orderSteps[i][0],
+								price: orderSteps[i][2].replace(/[^0-9.]/g, ''),
+								average: orderSteps[i][3].replace(/[^0-9.]/g, ''),
+								target: priceTargetNew,
+								qty: orderSteps[i][5].replace(/[^0-9.]/g, ''),
+								amount: orderSteps[i][6].replace(/[^0-9.]/g, ''),
+								qtySum: orderSteps[i][7].replace(/[^0-9.]/g, ''),
+								sum: orderSteps[i][8].replace(/[^0-9.]/g, ''),
+								type: orderSteps[i][9],
+								filled: 0
+							};
+
+			orderNew = orderObj;
+		}
+
+		ordersNew.push(orderNew);
+	}
+
+	return ordersNew;
 }
+
 
 async function checkTracker() {
-  // Monitor existing deals if they weren't updated after n minutes to take potential action
 
-  for (let dealId in dealTracker) {
-    let deal = dealTracker[dealId]["info"];
+	// Monitor existing deals if they weren't updated after n minutes to take potential action
 
-    let diffSec =
-      (new Date().getTime() - new Date(deal["updated"]).getTime()) / 1000;
+	for (let dealId in dealTracker) {
 
-    if (diffSec > 60 * maxMinsDeals) {
-      diffSec = (diffSec / 60).toFixed(2);
+		let deal = dealTracker[dealId]['info'];
 
-      let msg =
-        "WARNING: " +
-        dealId +
-        " exceeds last updated time by " +
-        diffSec +
-        " minutes. Check the logs for details.";
+		let diffSec = (new Date().getTime() - new Date(deal['updated']).getTime()) / 1000;
 
-      Common.logger(msg);
+		if (diffSec > (60 * maxMinsDeals)) {
 
-      Common.sendNotification({
-        message: msg,
-        type: "warning",
-        telegram_id: shareData.appData.telegram_id,
-      });
-    }
-  }
+			diffSec = (diffSec / 60).toFixed(2);
 
-  // Remove delayed volume timers
-  for (let key in timerTracker) {
-    let timerObj = timerTracker[key];
+			let msg = 'WARNING: ' + dealId + ' exceeds last updated time by ' + diffSec + ' minutes. Check the logs for details.';
 
-    let diffSec =
-      (new Date().getTime() - new Date(timerObj["started"]).getTime()) / 1000;
+			Common.logger(msg);
 
-    if (diffSec > 60 * (maxMinsVolume + 1.5)) {
-      clearTimeout(timerObj["id"]);
+			Common.sendNotification({ 'message': msg, 'type': 'warning', 'telegram_id': shareData.appData.telegram_id });
+		}
+	}
 
-      timerTracker[key] = null;
-      delete timerTracker[key];
-    }
-  }
+
+	// Remove delayed volume timers
+	for (let key in timerTracker) {
+
+		let timerObj = timerTracker[key];
+
+		let diffSec = (new Date().getTime() - new Date(timerObj['started']).getTime()) / 1000;
+
+		if (diffSec > (60 * (maxMinsVolume + 1.5))) {
+
+			clearTimeout(timerObj['id']);
+
+			timerTracker[key] = null;
+			delete timerTracker[key];
+		}
+	}
 }
+
 
 async function createDealTracker(data) {
-  const dealId = data["deal_id"];
 
-  dealTracker[dealId] = {};
-  dealTracker[dealId]["deal"] = {};
-  dealTracker[dealId]["info"] = {};
-  dealTracker[dealId]["update"] = {};
+	const dealId = data['deal_id'];
 
-  dealTracker[dealId]["deal"] = JSON.parse(JSON.stringify(data["deal"]));
+	dealTracker[dealId] = {};
+	dealTracker[dealId]['deal'] = {};
+	dealTracker[dealId]['info'] = {};
+	dealTracker[dealId]['update'] = {};
+
+	dealTracker[dealId]['deal'] = JSON.parse(JSON.stringify(data['deal']));
 }
 
-async function updateDealTracker(data) {
-  let dataObj = JSON.parse(JSON.stringify(data));
 
-  dataObj["active"] = true;
-  dataObj["updated"] = new Date();
+async function updateDealTracker(data) {	
 
-  const dealId = data["deal_id"];
+	let dataObj = JSON.parse(JSON.stringify(data));
 
-  const dealData = await getDealInfo(dataObj);
+	dataObj['active'] = true;
+	dataObj['updated'] = new Date();
 
-  dealTracker[dealId]["info"] = dealData["info"];
-  dealTracker[dealId]["deal"]["config"] = dealData["config"];
-  dealTracker[dealId]["deal"]["orders"] = dealData["orders"];
+	const dealId = data['deal_id'];
+
+	const dealData = await getDealInfo(dataObj);
+
+	dealTracker[dealId]['info'] = dealData['info'];
+	dealTracker[dealId]['deal']['config'] = dealData['config'];
+	dealTracker[dealId]['deal']['orders'] = dealData['orders'];
 }
+
 
 async function processDealTracker(dealId, msgErr, updateKey, dataKey) {
-  let finished = false;
-  let success = true;
 
-  let count = 0;
-  let msg = "Success";
+	let finished = false;
+	let success = true;
 
-  if (dealTracker[dealId] != undefined && dealTracker[dealId] != null) {
-    dealTracker[dealId]["update"][updateKey] = dataKey;
+	let count = 0;
+	let msg = 'Success';
 
-    while (!finished) {
-      await Common.delay(1000);
+	if (dealTracker[dealId] != undefined && dealTracker[dealId] != null) {
 
-      // Verify deal tracker key no longer exists
-      if (
-        dealTracker[dealId] == undefined ||
-        dealTracker[dealId] == null ||
-        !dealTracker[dealId]["update"][updateKey]
-      ) {
-        finished = true;
-      } else if (count >= 10) {
-        // Timeout
-        success = false;
-        msg = msgErr;
+		dealTracker[dealId]['update'][updateKey] = dataKey;
 
-        // Remove flag to continue follow
-        try {
-          delete dealTracker[dealId]["update"][updateKey];
-        } catch (e) {}
+		while (!finished) {
 
-        finished = true;
-      }
+			await Common.delay(1000);
 
-      count++;
-    }
-  } else {
-    success = false;
-    msg = "Deal ID not found";
-  }
+			// Verify deal tracker key no longer exists
+			if (dealTracker[dealId] == undefined || dealTracker[dealId] == null || !dealTracker[dealId]['update'][updateKey]) {
 
-  return { success: success, data: msg };
+				finished = true;
+			}
+			else if (count >= 10) {
+
+				// Timeout
+				success = false;
+				msg = msgErr;
+
+				// Remove flag to continue follow
+				try {
+		
+					delete dealTracker[dealId]['update'][updateKey];
+				}
+				catch(e) {
+		
+				}
+
+				finished = true;
+			}
+
+			count++;
+		}
+	}
+	else {
+
+		success = false;
+		msg = 'Deal ID not found';
+	}
+
+	return ( { 'success': success, 'data': msg } );
 }
+
 
 async function deleteDealTracker(dealId) {
-  dealTracker[dealId] = null;
-  delete dealTracker[dealId];
+
+	dealTracker[dealId] = null;
+	delete dealTracker[dealId];
 }
+
 
 async function getDealTracker(dealId) {
-  let dataObj;
 
-  if (dealId != undefined && dealId != null && dealId != "") {
-    try {
-      dataObj = JSON.parse(JSON.stringify(dealTracker[dealId]));
-    } catch (e) {}
-  } else {
-    try {
-      dataObj = JSON.parse(JSON.stringify(dealTracker));
-    } catch (e) {}
-  }
+	let dataObj;
 
-  return dataObj;
+	if (dealId != undefined && dealId != null && dealId != '') {
+
+		try {
+
+			dataObj = JSON.parse(JSON.stringify(dealTracker[dealId]));
+		}
+		catch(e) {}
+	}
+	else {
+
+		try {
+
+			dataObj = JSON.parse(JSON.stringify(dealTracker));
+		}
+		catch(e) {}
+	}
+
+	return dataObj;
 }
+
 
 async function getDealInfo(data) {
-  const updated = data["updated"];
-  const dealId = data["deal_id"];
-  const active = data["active"];
-  const price = data["price"];
 
-  const config = JSON.parse(JSON.stringify(data["config"]));
-  const orders = JSON.parse(JSON.stringify(data["orders"]));
+	const updated = data['updated'];
+	const dealId = data['deal_id'];
+	const active = data['active'];
+	const price = data['price'];
 
-  const filledOrders = orders.filter((item) => item.filled == 1);
-  const currentOrder = filledOrders.pop();
+	const config = JSON.parse(JSON.stringify(data['config']));
+	const orders = JSON.parse(JSON.stringify(data['orders']));
 
-  let profitPerc = await Percentage.subNumsAsPerc(price, currentOrder.average);
+	const filledOrders = orders.filter(item => item.filled == 1);
+	const currentOrder = filledOrders.pop();
 
-  profitPerc = Number(Number(profitPerc).toFixed(2));
+	let profitPerc = await Percentage.subNumsAsPerc(
+							price,
+							currentOrder.average
+						);
 
-  const takeProfit = shareData.Common.roundAmount(
-    Number(
-      Number(currentOrder.sum) * (Number(config.dcaTakeProfitPercent) / 100)
-    )
-  );
-  const currentProfit = shareData.Common.roundAmount(
-    Number(Number(currentOrder.sum) * (Number(profitPerc) / 100))
-  );
+	profitPerc = Number(Number(profitPerc).toFixed(2));
 
-  const dealInfo = {
-    updated: updated,
-    active: active,
-    bot_id: config.botId,
-    bot_name: config.botName,
-    safety_orders_used: filledOrders.length,
-    safety_orders_max: orders.length - 1,
-    price_last: price,
-    price_average: currentOrder.average,
-    price_target: currentOrder.target,
-    profit: currentProfit,
-    profit_percentage: profitPerc,
-    take_profit: takeProfit,
-    deal_count: config.dealCount,
-    deal_max: config.dealMax,
-  };
+	const takeProfit = shareData.Common.roundAmount(Number(Number(currentOrder.sum) * (Number(config.dcaTakeProfitPercent) / 100)));
+	const currentProfit = shareData.Common.roundAmount(Number((Number(currentOrder.sum) * (Number(profitPerc) / 100))));
 
-  return { info: dealInfo, config: config, orders: orders };
+	const dealInfo = {
+						'updated': updated,
+						'active': active,
+						'bot_id': config.botId,
+						'bot_name': config.botName,
+						'safety_orders_used': filledOrders.length,
+						'safety_orders_max': orders.length - 1,
+						'price_last': price,
+						'price_average': currentOrder.average,
+						'price_target': currentOrder.target,
+						'profit': currentProfit,
+						'profit_percentage': profitPerc,
+						'take_profit': takeProfit,
+						'deal_count': config.dealCount,
+						'deal_max': config.dealMax
+					 };
+
+	return ({ 'info': dealInfo, 'config': config, 'orders': orders });
 }
+
 
 async function initBot(data) {
-  let create = data["create"];
-  let configObj = JSON.parse(JSON.stringify(data["config"]));
 
-  if (create) {
-    configObj = await createBot(configObj);
-  } else {
-    configObj = await initConfigData(configObj);
-  }
+	let create = data['create'];
+	let configObj = JSON.parse(JSON.stringify(data['config']));
 
-  return configObj;
+	if (create) {
+
+		configObj = await createBot(configObj);
+	}
+	else {
+
+		configObj = await initConfigData(configObj);
+	}
+
+	return configObj;
 }
+
 
 async function initConfigData(config) {
-  let configObj = JSON.parse(JSON.stringify(config));
 
-  const botConfig = await shareData.Common.getConfig("bot.json");
+	let configObj = JSON.parse(JSON.stringify(config));
 
-  // Set exchange options
-  configObj["exchangeOptions"] = botConfig.data["exchangeOptions"];
+	const botConfig = await shareData.Common.getConfig('bot.json');
 
-  // Set credentials
-  for (let key in botConfig.data) {
-    if (key.substring(0, 3).toLowerCase() == "api") {
-      configObj[key] = botConfig.data[key];
-    }
-  }
+	// Set exchange options
+	configObj['exchangeOptions'] = botConfig.data['exchangeOptions'];
 
-  // Set bot id
-  if (
-    configObj["botId"] == undefined ||
-    configObj["botId"] == null ||
-    configObj["botId"] == ""
-  ) {
-    configObj["botId"] = Common.uuidv4();
-  }
+	// Set credentials
+	for (let key in botConfig.data) {
 
-  // Set initial deal count
-  if (
-    configObj["dealCount"] == undefined ||
-    configObj["dealCount"] == null ||
-    configObj["dealCount"] == 0
-  ) {
-    configObj["dealCount"] = 1;
-  }
+		if (key.substring(0, 3).toLowerCase() == 'api') {
 
-  return configObj;
+			configObj[key] = botConfig.data[key];
+		}
+	}
+
+	// Set bot id
+	if (configObj['botId'] == undefined || configObj['botId'] == null || configObj['botId'] == '') {
+
+		configObj['botId'] = Common.uuidv4();
+	}
+
+	// Set initial deal count
+	if (configObj['dealCount'] == undefined || configObj['dealCount'] == null || configObj['dealCount'] == 0) {
+
+		configObj['dealCount'] = 1;
+	}
+
+	return configObj;
 }
+
 
 async function removeConfigData(config) {
-  let configObj = JSON.parse(JSON.stringify(config));
 
-  for (let key in configObj) {
-    if (key.substring(0, 3).toLowerCase() == "api") {
-      delete configObj[key];
-    }
-  }
+	let configObj = JSON.parse(JSON.stringify(config));
 
-  return configObj;
+	for (let key in configObj) {
+
+		if (key.substring(0, 3).toLowerCase() == 'api') {
+
+			delete configObj[key];
+		}
+	}
+
+	return configObj;
 }
+
 
 async function ordersToHtml(data) {
-  let rows = data.split(/[\r\n]+/);
 
-  let table = '<table id="ordersTable" cellspacing=0 cellpadding=0>';
+	let rows = data.split(/[\r\n]+/);
 
-  for (let i = 0; i < rows.length; i++) {
-    let cols = rows[i].split(/[\s\t]+/);
+	let table = '<table id="ordersTable" cellspacing=0 cellpadding=0>';
 
-    let tag = "td";
-    let row = "<tr>";
+	for (let i = 0; i < rows.length; i++) {
 
-    if (i == 0) {
-      tag = "th";
-    }
+		let cols = rows[i].split(/[\s\t]+/);
 
-    for (let x = 0; x < cols.length; x++) {
-      let col = cols[x];
-      row += "<" + tag + ">" + col.trim() + "</" + tag + ">";
-    }
+		let tag = 'td';
+		let row = '<tr>';
+			
+		if (i == 0) {
 
-    row += "</tr>";
+			tag = 'th';
+		}
 
-    if (i != 1) {
-      table += row;
-    }
-  }
+		for (let x = 0; x < cols.length; x++) {
 
-  table += "</table>";
+			let col = cols[x];
+			row += '<' + tag + '>' + col.trim() + '</' + tag + '>';
+		}
 
-  return table;
+		row += '</tr>';
+
+		if (i != 1) {
+
+			table += row;
+		}
+	}
+	
+	table += '</table>';
+	
+	return table;
 }
+
 
 async function ordersToData(data) {
-  let rows = data.split(/[\r\n]+/);
 
-  let count = 0;
+	let rows = data.split(/[\r\n]+/);
 
-  let headers = [];
-  let steps = [];
+	let count = 0;
 
-  for (let i = 0; i < rows.length; i++) {
-    let stepsTemp = [];
+	let headers = [];
+	let steps = [];
 
-    let cols = rows[i].split(/[\s\t]+/);
+	for (let i = 0; i < rows.length; i++) {
 
-    if (i == 0) {
-      headers = cols.map((item) => {
-        return item.trim();
-      });
-    }
+		let stepsTemp = [];
 
-    if (i < 2) {
-      continue;
-    }
+		let cols = rows[i].split(/[\s\t]+/);
 
-    for (let x = 0; x < cols.length; x++) {
-      let col = cols[x].trim();
+		if (i == 0) {
 
-      stepsTemp.push(col);
-    }
+			headers = cols.map(item => {
 
-    stepsTemp = stepsTemp.filter((a) => a);
+				return item.trim();
+			});
+		}
 
-    if (stepsTemp.length > 0) {
-      steps[count] = stepsTemp;
+		if (i < 2) {
 
-      count++;
-    }
-  }
+			continue;
+		}
 
-  // Remove empty
-  headers = headers.filter((a) => a);
+		for (let x = 0; x < cols.length; x++) {
 
-  const orders = { headers: headers, steps: steps };
+			let col = cols[x].trim();
 
-  return orders;
+			stepsTemp.push(col);
+		}
+
+		stepsTemp = stepsTemp.filter((a) => a);
+
+		if (stepsTemp.length > 0) {
+
+			steps[count] = stepsTemp;
+
+			count++;
+		}
+	}
+
+	// Remove empty
+	headers = headers.filter((a) => a);
+
+	const orders = { 'headers': headers, 'steps': steps };
+
+	return orders;
 }
+
 
 async function ordersCreateTable(data) {
-  let config = data["config"];
-  let orders = data["orders"];
 
-  let ordersDeviation = [];
+	let config = data['config'];
+	let orders = data['orders'];
 
-  let t = new Table();
+	let ordersDeviation = [];
 
-  for (let x = 0; x < orders.length; x++) {
-    let order = orders[x];
+	let t = new Table();
 
-    let deviationPerc = await getDeviationDca(
-      config.dcaOrderStepPercent,
-      config.dcaOrderStepPercentMultiplier,
-      x
-    );
+	for (let x = 0; x < orders.length; x++) {
 
-    deviationPerc = Number(deviationPerc.toFixed(2));
+		let order = orders[x];
 
-    ordersDeviation.push(deviationPerc);
-  }
+		let deviationPerc = await getDeviationDca(config.dcaOrderStepPercent, config.dcaOrderStepPercentMultiplier, x);
 
-  orders.forEach(function (order) {
-    t.cell("No", order.orderNo);
-    t.cell("Deviation", ordersDeviation[order.orderNo - 1] + "%");
-    t.cell("Price", "$" + order.price);
-    t.cell("Average", "$" + order.average);
-    t.cell("Target", "$" + order.target);
-    t.cell("Qty", order.qty);
-    t.cell("Amount($)", "$" + order.amount);
-    t.cell("Sum(Qty)", order.qtySum);
-    t.cell("Sum($)", "$" + order.sum);
-    t.cell("Type", order.type);
-    t.cell("Filled", order.filled == 0 ? "Waiting" : "Filled");
+		deviationPerc = Number(deviationPerc.toFixed(2));
 
-    t.newRow();
-  });
+		ordersDeviation.push(deviationPerc);
+	}
 
-  let maxDeviation = await getDeviationDca(
-    config.dcaOrderStepPercent,
-    config.dcaOrderStepPercentMultiplier,
-    orders.length - 1
-  );
+	orders.forEach(function (order) {
+	
+		t.cell('No', order.orderNo);
+		t.cell('Deviation', ordersDeviation[order.orderNo - 1] + '%');
+		t.cell('Price', '$' + order.price);
+		t.cell('Average', '$' + order.average);
+		t.cell('Target', '$' + order.target);
+		t.cell('Qty', order.qty);
+		t.cell('Amount($)', '$' + order.amount);
+		t.cell('Sum(Qty)', order.qtySum);
+		t.cell('Sum($)', '$' + order.sum);
+		t.cell('Type', order.type);
+		t.cell('Filled', order.filled == 0 ? 'Waiting' : 'Filled');
 
-  return { table: t, max_deviation: maxDeviation };
+		t.newRow();
+	});
+
+	let maxDeviation = await getDeviationDca(config.dcaOrderStepPercent, config.dcaOrderStepPercentMultiplier, orders.length - 1);
+
+	return ( { 'table': t, 'max_deviation': maxDeviation } );
 }
 
-async function ordersAddContent(
-  wallet,
-  lastDcaOrderSum,
-  maxDeviation,
-  balanceObj
-) {
-  let balanceError;
 
-  if (balanceObj != undefined && balanceObj != null && balanceObj != "") {
-    balanceError = balanceObj.error;
-  }
+async function ordersAddContent(wallet, lastDcaOrderSum, maxDeviation, balanceObj) {
 
-  let obj = {
-    balance: Number(wallet),
-    balance_error: balanceError,
-    max_funds: Number(lastDcaOrderSum),
-    max_deviation_percent: Number(maxDeviation.toFixed(2)),
-  };
+	let balanceError;
 
-  return obj;
+	if (balanceObj != undefined && balanceObj != null && balanceObj != '') {
+
+		balanceError = balanceObj.error;
+	}
+
+	let obj = {
+				'balance': Number(wallet),
+				'balance_error': balanceError,
+				'max_funds': Number(lastDcaOrderSum),
+				'max_deviation_percent': Number(maxDeviation.toFixed(2))
+			  };
+
+	return obj;
 }
+
 
 async function sendNotificationStart(botName, dealId, pair) {
-  let msg = botName + ": Starting new deal. Pair: " + pair.toUpperCase();
 
-  Common.sendNotification({
-    message: msg,
-    type: "deal_open",
-    telegram_id: shareData.appData.telegram_id,
-  });
+	let msg = botName + ': Starting new deal. Pair: ' + pair.toUpperCase();
+
+	Common.sendNotification({ 'message': msg, 'type': 'deal_open', 'telegram_id': shareData.appData.telegram_id });
 }
+
 
 async function sendNotificationFinish(botName, dealId, pair, sellData) {
-  let orderCount = 0;
 
-  let msg;
-  let msgLoss;
-  let msgProfit;
+	let orderCount = 0;
 
-  const dealData = await getDeals({ dealId: dealId });
-  const profitPerc = Number(sellData.profit);
+	let msg;
+	let msgLoss;
+	let msgProfit;
 
-  const deal = dealData[0];
-  const orders = deal.orders;
+	const dealData = await getDeals({ 'dealId': dealId });
+	const profitPerc = Number(sellData.profit);
 
-  for (let x = 0; x < orders.length; x++) {
-    const order = orders[x];
+	const deal = dealData[0];
+	const orders = deal.orders;
 
-    if (order["filled"]) {
-      orderCount++;
-    }
-  }
+	for (let x = 0; x < orders.length; x++) {
 
-  const profit = shareData.Common.roundAmount(
-    Number(Number(orders[orderCount - 1]["sum"]) * (profitPerc / 100))
-  );
-  const duration = shareData.Common.timeDiff(
-    new Date(),
-    new Date(deal["date"])
-  );
+		const order = orders[x];
 
-  try {
-    let msgObj = JSON.parse(
-      fs.readFileSync(
-        pathRoot + "/libs/strategies/DCABot/telegram/dealComplete.json",
-        { encoding: "utf8", flag: "r" }
-      )
-    );
+		if (order['filled']) {
 
-    msgLoss = msgObj["loss"];
-    msgProfit = msgObj["profit"];
-  } catch (e) {}
+			orderCount++;
+		}
+	}
 
-  if (profit <= 0) {
-    msg = msgLoss;
-  } else {
-    msg = msgProfit;
-  }
+	const profit = shareData.Common.roundAmount(Number((Number(orders[orderCount - 1]['sum']) * (profitPerc / 100))));
+	const duration = shareData.Common.timeDiff(new Date(), new Date(deal['date']));
 
-  msg = msg.replace(/\{BOT_NAME\}/g, botName);
-  msg = msg.replace(/\{DEAL_ID\}/g, dealId);
-  msg = msg.replace(/\{PAIR\}/g, pair.toUpperCase());
-  msg = msg.replace(/\{PROFIT\}/g, profit);
-  msg = msg.replace(/\{PROFIT_PERCENT\}/g, profitPerc);
-  msg = msg.replace(/\{DURATION\}/g, duration);
+	try {
 
-  Common.sendNotification({
-    message: msg,
-    type: "deal_close",
-    telegram_id: shareData.appData.telegram_id,
-  });
+		let msgObj = JSON.parse(fs.readFileSync(pathRoot + '/libs/strategies/DCABot/telegram/dealComplete.json', { encoding: 'utf8', flag: 'r' }));
+
+		msgLoss = msgObj['loss'];
+		msgProfit = msgObj['profit'];
+	}
+	catch(e) {
+
+	}
+
+	if (profit <= 0) {
+
+		msg = msgLoss;
+	}
+	else {
+
+		msg = msgProfit;
+	}
+
+	msg = msg.replace(/\{BOT_NAME\}/g, botName);
+	msg = msg.replace(/\{DEAL_ID\}/g, dealId);
+	msg = msg.replace(/\{PAIR\}/g, pair.toUpperCase());
+	msg = msg.replace(/\{PROFIT\}/g, profit);
+	msg = msg.replace(/\{PROFIT_PERCENT\}/g, profitPerc);
+	msg = msg.replace(/\{DURATION\}/g, duration);
+
+	Common.sendNotification({ 'message': msg, 'type': 'deal_close', 'telegram_id': shareData.appData.telegram_id });
 }
+
 
 async function ordersValid(pair, orders) {
-  let msg;
-  let success = true;
 
-  if (Array.isArray(orders) && orders.length > 1) {
-    let priceAverage1 = orders[0]["average"];
-    let priceAverage2 = orders[1]["average"];
+	let msg;
+	let success = true;
 
-    if (priceAverage1 == priceAverage2) {
-      success = false;
+	if (Array.isArray(orders) && orders.length > 1) {
 
-      msg =
-        pair + " average price calculations are identical. Not allowing pair.";
+		let priceAverage1 = orders[0]['average'];
+		let priceAverage2 = orders[1]['average'];
 
-      if (shareData.appData.verboseLog) {
-        Common.logger(colors.bgRed.bold(msg));
-      }
-    }
-  }
+		if (priceAverage1 == priceAverage2) {
 
-  return { success: success, data: msg };
+			success = false;
+
+			msg = pair + ' average price calculations are identical. Not allowing pair.';
+
+			if (shareData.appData.verboseLog) { Common.logger( colors.bgRed.bold(msg) ); }
+		}
+	}
+
+	return ( { 'success': success, 'data': msg } );
 }
+
 
 async function volumeValid(startBot, pair, symbol, config) {
-  let success = true;
 
-  const pairSafe = pair.replace(/\//g, "_");
+	let success = true;
 
-  const volumeMin = Number(config.volumeMin);
+	const pairSafe = pair.replace(/\//g, '_');
 
-  const volume24h = Number(
-    ((symbol.last * symbol.baseVolume) / 1000000).toFixed(2)
-  );
+	const volumeMin = Number(config.volumeMin);
 
-  const timerKey = config.botId + pairSafe;
+	const volume24h = Number(((symbol.last * symbol.baseVolume) / 1000000).toFixed(2));
 
-  let msg =
-    "Delaying deal start. " +
-    pair +
-    " 24h volume: " +
-    volume24h +
-    "M. Minimum required: " +
-    volumeMin +
-    "M";
+	const timerKey = config.botId + pairSafe;
 
-  if (startBot && volumeMin > 0 && volume24h < volumeMin) {
-    const configObj = JSON.parse(JSON.stringify(config));
+	let msg = 'Delaying deal start. ' + pair + ' 24h volume: ' + volume24h + 'M. Minimum required: ' + volumeMin + 'M';
 
-    // Clear previous timeout if exists so additional starts don't occur
-    if (timerTracker[timerKey] != undefined && timerTracker[timerKey] != null) {
-      clearTimeout(timerTracker[timerKey]["id"]);
-    } else {
-      timerTracker[timerKey] = {};
-      timerTracker[timerKey]["started"] = new Date();
+	if (startBot && volumeMin > 0 && volume24h < volumeMin) {
 
-      Common.sendNotification({
-        message: msg,
-        type: "warning",
-        telegram_id: shareData.appData.telegram_id,
-      });
-    }
+		const configObj = JSON.parse(JSON.stringify(config));
 
-    let diffSec =
-      (new Date().getTime() -
-        new Date(timerTracker[timerKey]["started"]).getTime()) /
-      1000;
+		// Clear previous timeout if exists so additional starts don't occur
+		if (timerTracker[timerKey] != undefined && timerTracker[timerKey] != null) {
 
-    if (diffSec > 60 * maxMinsVolume) {
-      timerTracker[timerKey] = null;
-      delete timerTracker[timerKey];
+			clearTimeout(timerTracker[timerKey]['id']);
+		}
+		else {
 
-      if (shareData.appData.verboseLog) {
-        Common.logger(
-          colors.bgCyan.bold(
-            "Timeout reached for volume delayed deal start: " + pair
-          )
-        );
-      }
-    } else {
-      if (shareData.appData.verboseLog) {
-        Common.logger(colors.bgCyan.bold(msg));
-      }
+			timerTracker[timerKey] = {};
+			timerTracker[timerKey]['started'] = new Date();
 
-      timerTracker[timerKey]["id"] = setTimeout(() => {
-        startVerify(configObj);
-      }, 60000 * 1);
-    }
+			Common.sendNotification({ 'message': msg, 'type': 'warning', 'telegram_id': shareData.appData.telegram_id });
+		}
 
-    success = false;
-  }
+		let diffSec = (new Date().getTime() - new Date(timerTracker[timerKey]['started']).getTime()) / 1000;
 
-  return success;
+		if (diffSec > (60 * maxMinsVolume)) {
+
+			timerTracker[timerKey] = null;
+			delete timerTracker[timerKey];
+
+			if (shareData.appData.verboseLog) { Common.logger( colors.bgCyan.bold('Timeout reached for volume delayed deal start: ' + pair) ); }
+		}
+		else {
+
+			if (shareData.appData.verboseLog) { Common.logger( colors.bgCyan.bold(msg) ); }
+
+			timerTracker[timerKey]['id'] = setTimeout(() => {
+																startVerify(configObj);
+
+															}, (60000 * 1));
+		}
+
+		success = false;
+	}
+
+	return success;
 }
+
 
 async function genDealId(botId, pair) {
-  const pairSafe = pair.replace(/\//g, "_");
 
-  let dateNow = Math.floor(Date.now() / 1000);
+	const pairSafe = pair.replace(/\//g, '_');
 
-  let str = botId + "-" + pairSafe + "-" + dateNow;
+	let dateNow = Math.floor(Date.now() / 1000);
 
-  let code = Common.hashCode(str);
+	let str = botId + '-' + pairSafe + '-' + dateNow;
 
-  code = Common.numToBase26(code);
+	let code = Common.hashCode(str);
 
-  let dealId = pairSafe + "-" + code + "-" + dateNow;
+	code = Common.numToBase26(code);
 
-  return dealId;
+	let dealId = pairSafe + '-' + code + '-' + dateNow;
+
+	return dealId;
 }
+
 
 async function createBot(config) {
-  let configObj;
 
-  let botOk = false;
+	let configObj;
 
-  let configPassed = JSON.parse(JSON.stringify(config));
-  let configSave = await removeConfigData(JSON.parse(JSON.stringify(config)));
+	let botOk = false;
 
-  while (!botOk) {
-    let isErr;
+	let configPassed = JSON.parse(JSON.stringify(config));
+	let configSave = await removeConfigData(JSON.parse(JSON.stringify(config)));
 
-    configObj = JSON.parse(JSON.stringify(configPassed));
-    configObj = await initConfigData(configObj);
+	while (!botOk) {
 
-    let bot = await Bots.findOne({
-      botId: configObj.botId,
-    });
+		let isErr;
 
-    if (!bot) {
-      let active = true;
+		configObj = JSON.parse(JSON.stringify(configPassed));
+		configObj = await initConfigData(configObj);
 
-      if (typeof configObj.active == "boolean") {
-        active = configObj.active;
-      }
+		let bot = await Bots.findOne({
+		
+				botId: configObj.botId,
+		});
 
-      delete configSave["active"];
+		if (!bot) {
 
-      let bot = new Bots({
-        botId: configObj.botId,
-        botName: configObj.botName,
-        config: configSave,
-        active: active,
-        date: Date.now(),
-      });
+			let active = true;
+				
+			if (typeof configObj.active == 'boolean') {
 
-      await bot.save().catch((err) => {
-        isErr = err;
+				active = configObj.active;
+			}
 
-        if (err.code === 11000) {
-          // Duplicate entry
-        }
-      });
+			delete configSave['active'];
 
-      if (isErr == undefined || isErr == null) {
-        botOk = true;
-      } else {
-        await Common.delay(1000);
-      }
-    } else {
-      botOk = true;
-    }
-  }
+			let bot = new Bots({
+									'botId': configObj.botId,
+									'botName': configObj.botName,
+									'config': configSave,
+									'active': active,
+									'date': Date.now(),
+								});
 
-  return configObj;
+			await bot.save()
+					.catch(err => {
+										isErr = err;
+
+										if (err.code === 11000) {
+
+											// Duplicate entry
+										}
+								  });
+
+			if (isErr == undefined || isErr == null) {
+
+				botOk = true;
+			}
+			else {
+
+				await Common.delay(1000);
+			}
+		}
+		else {
+
+			botOk = true;
+		}
+	}
+
+	return configObj;
 }
+
 
 async function createDeal(pair, pairMax, dealCount, dealMax, config, orders) {
-  let deal;
-  let dealId;
 
-  let dealOk = false;
+	let deal;
+	let dealId;
 
-  const configSave = await removeConfigData(config);
+	let dealOk = false;
 
-  while (!dealOk) {
-    let isErr;
+	const configSave = await removeConfigData(config);
 
-    dealId = await genDealId(config.botId, pair);
+	while (!dealOk) {
 
-    deal = new Deals({
-      botId: config.botId,
-      botName: config.botName,
-      dealId: dealId,
-      exchange: config.exchange,
-      pair: pair,
-      date: Date.now(),
-      status: 0,
-      config: configSave,
-      orders: orders,
-      isStart: 0,
-      active: true,
-      dealCount: dealCount,
-      dealMax: dealMax,
-      pairMax: pairMax,
-    });
+		let isErr;
 
-    await deal.save().catch((err) => {
-      isErr = err;
+		dealId = await genDealId(config.botId, pair);
 
-      if (err.code === 11000) {
-        // Duplicate entry
-      }
-    });
+		deal = new Deals({
+							'botId': config.botId,
+							'botName': config.botName,
+							'dealId': dealId,
+							'exchange': config.exchange,
+							'pair': pair,
+							'date': Date.now(),
+							'status': 0,
+							'config': configSave,
+							'orders': orders,
+							'isStart': 0,
+							'active': true,
+							'dealCount': dealCount,
+							'dealMax': dealMax,
+							'pairMax': pairMax
+						});
 
-    if (isErr == undefined || isErr == null) {
-      dealOk = true;
-    } else {
-      await Common.delay(1000);
-    }
-  }
+		await deal.save()
+					.catch(err => {
+										isErr = err;
 
-  if (shareData.appData.verboseLog) {
-    Common.logger(
-      colors.green.bold(
-        config.botName +
-          ": Starting new deal. Pair: " +
-          pair.toUpperCase() +
-          " / Deal ID: " +
-          dealId
-      )
-    );
-  }
+										if (err.code === 11000) {
 
-  sendNotificationStart(config.botName, dealId, pair);
+											// Duplicate entry
+										}
+								  });
 
-  return { deal: deal, deal_id: dealId };
+		if (isErr == undefined || isErr == null) {
+
+			dealOk = true;
+		}
+		else {
+
+			await Common.delay(1000);
+		}
+	}
+
+	if (shareData.appData.verboseLog) {
+
+		Common.logger(colors.green.bold(config.botName + ': Starting new deal. Pair: ' + pair.toUpperCase() + ' / Deal ID: ' + dealId));
+	}
+
+	sendNotificationStart(config.botName, dealId, pair);
+
+	return ({ 'deal': deal, 'deal_id': dealId });
 }
+
 
 async function startVerify(config) {
-  // Verify bot is still enabled / active
 
-  const pair = config.pair;
-  const botId = config.botId;
-  const dealCount = config.dealCount;
+	// Verify bot is still enabled / active
 
-  if (botId != undefined && botId != null && botId != "") {
-    // Reload bot config from db in case any changes were made
-    const bot = await getBots({ botId: botId });
+	const pair = config.pair;
+	const botId = config.botId;
+	const dealCount = config.dealCount;
 
-    if (bot && bot.length > 0) {
-      if (bot[0].active) {
-        // Get total active pairs currently running on bot
-        let botDealsActive = await getDeals({ botId: botId, status: 0 });
+	if (botId != undefined && botId != null && botId != '') {
 
-        let pairCount = botDealsActive.length;
+		// Reload bot config from db in case any changes were made
+		const bot = await getBots({ 'botId': botId });
 
-        let botConfigDb = bot[0].config;
+		if (bot && bot.length > 0) {
 
-        let pairMax = botConfigDb.pairMax;
+			if (bot[0].active) {
 
-        if (pairMax == undefined || pairMax == null || pairMax == "") {
-          pairMax = 0;
-        }
+				// Get total active pairs currently running on bot
+				let botDealsActive = await getDeals({ 'botId': botId, 'status': 0 });
 
-        if (pairMax == 0 || pairCount < pairMax) {
-          botConfigDb["pair"] = pair;
-          botConfigDb["botId"] = botId;
-          botConfigDb["dealCount"] = dealCount;
+				let pairCount = botDealsActive.length;
 
-          start({ create: true, config: botConfigDb });
-        }
-      }
-    }
-  }
+				let botConfigDb = bot[0].config;
+
+				let pairMax = botConfigDb.pairMax;
+
+				if (pairMax == undefined || pairMax == null || pairMax == '') {
+
+					pairMax = 0;
+				}
+
+				if (pairMax == 0 || pairCount < pairMax) {
+
+					botConfigDb['pair'] = pair;
+					botConfigDb['botId'] = botId;
+					botConfigDb['dealCount'] = dealCount;
+
+					start({ 'create': true, 'config': botConfigDb });
+				}
+			}
+		}
+	}
 }
+
 
 async function startSignals() {
-  // Start signals after everything else is finished loading
 
-  const appConfig = await Common.getConfig("app.json");
+	// Start signals after everything else is finished loading
 
-  const enabled = appConfig["data"]["signals"]["3CQS"]["enabled"];
+	const appConfig = await Common.getConfig('app.json');
 
-  const socket = await shareData.Signals3CQS.start(
-    enabled,
-    appConfig["data"]["signals"]["3CQS"]["api_key"]
-  );
+	const enabled = appConfig['data']['signals']['3CQS']['enabled'];
+
+	const socket = await shareData.Signals3CQS.start(enabled, appConfig['data']['signals']['3CQS']['api_key']);
 }
+
 
 async function startAsap(pairIgnore) {
-  // Start any active asap bots that have no deals running
-  const botsActive = await getBots({
-    active: true,
-    "config.startConditions": { $eq: "asap" },
-  });
 
-  if (botsActive && botsActive.length > 0) {
-    let count = 0;
+	// Start any active asap bots that have no deals running
+	const botsActive = await getBots({ 'active': true, 'config.startConditions': { '$eq': 'asap' } });
 
-    for (let i = 0; i < botsActive.length; i++) {
-      let bot = botsActive[i];
+	if (botsActive && botsActive.length > 0) {
 
-      let config = bot["config"];
+		let count = 0;
 
-      let botId = bot.botId;
-      let botName = bot.botName;
+		for (let i = 0; i < botsActive.length; i++) {
 
-      let pairs = config.pair;
-      let pairMax = config.pairMax;
+			let bot = botsActive[i];
 
-      if (pairMax == undefined || pairMax == null || pairMax == "") {
-        pairMax = 0;
-      }
+			let config = bot['config'];
 
-      // Get total active pairs currently running on bot
-      let botDealsActive = await getDeals({ botId: botId, status: 0 });
+			let botId = bot.botId;
+			let botName = bot.botName;
 
-      let pairCount = botDealsActive.length;
+			let pairs = config.pair;
+			let pairMax = config.pairMax;
 
-      for (let x = 0; x < pairs.length; x++) {
-        let pair = pairs[x];
+			if (pairMax == undefined || pairMax == null || pairMax == '') {
 
-        if (pairIgnore != undefined && pairIgnore != null && pairIgnore != "") {
-          if (pair.toUpperCase() == pairIgnore.toUpperCase()) {
-            continue;
-          }
-        }
+				pairMax = 0;
+			}
 
-        let dealsActive = await getDeals({
-          botId: botId,
-          pair: pair,
-          status: 0,
-        });
+			// Get total active pairs currently running on bot
+			let botDealsActive = await getDeals({ 'botId': botId, 'status': 0 });
 
-        config["pair"] = pair;
-        config = await applyConfigData({
-          bot_id: botId,
-          bot_name: botName,
-          config: config,
-        });
+			let pairCount = botDealsActive.length;
 
-        // Start bot if active, no deals are currently running and start condition is now asap
-        if (dealsActive && dealsActive.length == 0) {
-          if (pairMax == 0 || pairCount < pairMax) {
-            startDelay({ config: config, delay: count + 1, notify: false });
+			for (let x = 0; x < pairs.length; x++) {
 
-            count++;
-            pairCount++;
-          } else {
-            //Common.logger('Bot max pairs of ' + pairMax + ' reached');
-          }
-        }
-      }
-    }
-  }
+				let pair = pairs[x];
+
+				if (pairIgnore != undefined && pairIgnore != null && pairIgnore != '') {
+
+					if (pair.toUpperCase() == pairIgnore.toUpperCase()) {
+
+						continue;
+					}
+				}
+
+				let dealsActive = await getDeals({ 'botId': botId, 'pair': pair, 'status': 0 });
+
+				config['pair'] = pair;
+				config = await applyConfigData({ 'bot_id': botId, 'bot_name': botName, 'config': config });
+
+				// Start bot if active, no deals are currently running and start condition is now asap
+				if (dealsActive && dealsActive.length == 0) {
+
+					if (pairMax == 0 || pairCount < pairMax) {
+
+						startDelay({ 'config': config, 'delay': count + 1, 'notify': false });
+
+						count++;
+						pairCount++;
+					}
+					else {
+
+						//Common.logger('Bot max pairs of ' + pairMax + ' reached');
+					}
+				}
+			}
+		}
+	}
 }
+
 
 async function resumeBots() {
-  // Check for active deals and resume bots
-  const dealsActive = await getDeals({ status: 0 });
 
-  if (dealsActive && dealsActive.length > 0) {
-    Common.logger(
-      colors.bgGreen.bold(
-        "Resuming " + dealsActive.length + " active DCA bot deals..."
-      )
-    );
+	// Check for active deals and resume bots
+	const dealsActive = await getDeals({ 'status': 0 });
 
-    for (let i = 0; i < dealsActive.length; i++) {
-      let deal = dealsActive[i];
+	if (dealsActive && dealsActive.length > 0) {
 
-      await resumeDeal(deal);
-    }
-  }
+		Common.logger( colors.bgGreen.bold('Resuming ' + dealsActive.length + ' active DCA bot deals...') );
 
-  await Common.delay(5000);
+		for (let i = 0; i < dealsActive.length; i++) {
 
-  startAsap();
+			let deal = dealsActive[i];
+
+			await resumeDeal(deal);
+		}
+	}
+
+	await Common.delay(5000);
+
+	startAsap();
 }
+
 
 async function resumeDeal(dealObj) {
-  let deal = JSON.parse(JSON.stringify(dealObj));
 
-  let config = deal.config;
+	let deal = JSON.parse(JSON.stringify(dealObj));
 
-  const botId = deal.botId;
-  const botName = deal.botName;
-  const dealId = deal.dealId;
-  const pair = deal.pair;
-  const dealCount = deal.dealCount;
-  const dealMax = deal.dealMax;
-  const signalId = config.signalId;
+	let config = deal.config;
 
-  // Apply previous config data
+	const botId = deal.botId;
+	const botName = deal.botName;
+	const dealId = deal.dealId;
+	const pair = deal.pair;
+	const dealCount = deal.dealCount;
+	const dealMax = deal.dealMax;
+	const signalId = config.signalId;
 
-  config["dealCount"] = dealCount;
-  config["dealMax"] = dealMax;
-  config["dealResumeId"] = dealId;
+	// Apply previous config data
 
-  deal["config"] = await applyConfigData({
-    signal_id: signalId,
-    bot_id: botId,
-    bot_name: botName,
-    config: config,
-  });
+	config['dealCount'] = dealCount;
+	config['dealMax'] = dealMax;
+	config['dealResumeId'] = dealId;
 
-  await createDealTracker({ deal_id: dealId, deal: deal });
+	deal['config'] = await applyConfigData({ 'signal_id': signalId, 'bot_id': botId, 'bot_name': botName, 'config': config });
 
-  Common.logger(colors.bgGreen.bold("Resuming Deal ID " + dealId));
-  start({ create: true, config: config });
+	await createDealTracker({ 'deal_id': dealId, 'deal': deal });
 
-  await Common.delay(1000);
+	Common.logger( colors.bgGreen.bold('Resuming Deal ID ' + dealId) );
+
+	start({ 'create': true, 'config': config });
+
+	await Common.delay(1000);
 }
+
 
 async function pauseDeal(dealId, pause) {
-  let success = true;
-  let msg = "Success";
-  let updateKey = "deal_pause";
 
-  if (dealTracker[dealId] != undefined && dealTracker[dealId] != null) {
-    if (pause) {
-      // Set deal_pause flag
-      dealTracker[dealId]["update"][updateKey] = true;
-    } else {
-      // Remove deal_pause flag
-      delete dealTracker[dealId]["update"][updateKey];
-    }
-  } else {
-    success = false;
-    msg = "Deal ID not found";
-  }
+	let success = true;
+	let msg = 'Success';
+	let updateKey = 'deal_pause';
 
-  return { success: success, data: msg };
+	if (dealTracker[dealId] != undefined && dealTracker[dealId] != null) {
+
+		if (pause) {
+
+			// Set deal_pause flag
+			dealTracker[dealId]['update'][updateKey] = true;
+		}
+		else {
+
+			// Remove deal_pause flag
+			delete dealTracker[dealId]['update'][updateKey];
+		}
+	}
+	else {
+
+		success = false;
+		msg = 'Deal ID not found';
+	}
+
+	return ( { 'success': success, 'data': msg } );
 }
+
 
 async function refreshUpdateDeal(data) {
-  let dealId = data["deal_id"];
-  let config = data["config"];
 
-  let updateKey = "config";
-  let msgErr = "Deal refresh timeout";
+	let dealId = data['deal_id'];
+	let config = data['config'];
 
-  const res = await processDealTracker(dealId, msgErr, updateKey, config);
+	let updateKey = 'config';
+	let msgErr = 'Deal refresh timeout';
 
-  return res;
+	const res = await processDealTracker(dealId, msgErr, updateKey, config);
+
+	return res;
 }
+
 
 async function stopDeal(dealId) {
-  let updateKey = "deal_stop";
-  let msgErr = "Deal stop timeout";
 
-  const res = await processDealTracker(dealId, msgErr, updateKey, true);
+	let updateKey = 'deal_stop';
+	let msgErr = 'Deal stop timeout';
 
-  return res;
+	const res = await processDealTracker(dealId, msgErr, updateKey, true);
+
+	return res;
 }
+
 
 async function cancelDeal(dealId) {
-  let updateKey = "deal_cancel";
-  let msgErr = "Deal cancel timeout";
 
-  const res = await processDealTracker(dealId, msgErr, updateKey, true);
+	let updateKey = 'deal_cancel';
+	let msgErr = 'Deal cancel timeout';
 
-  return res;
+	const res = await processDealTracker(dealId, msgErr, updateKey, true);
+
+	return res;
 }
+
 
 async function panicSellDeal(dealId) {
-  let updateKey = "deal_panic_sell";
-  let msgErr = "Deal sell timeout";
 
-  const res = await processDealTracker(dealId, msgErr, updateKey, true);
+	let updateKey = 'deal_panic_sell';
+	let msgErr = 'Deal sell timeout';
 
-  return res;
+	const res = await processDealTracker(dealId, msgErr, updateKey, true);
+
+	return res;
 }
+
 
 async function addFundsDeal(dealId, volume) {
-  let success = true;
-  let isUpdated = false;
-  let msg = "Success";
 
-  const deal = await Deals.findOne({
-    dealId: dealId,
-    status: 0,
-  });
+	let success = true;
+	let isUpdated = false;
+	let msg = 'Success';
 
-  if (deal) {
-    const config = JSON.parse(JSON.stringify(deal.config));
-    const orders = JSON.parse(JSON.stringify(deal.orders));
+	const deal = await Deals.findOne({
+		dealId: dealId,
+		status: 0,
+	});
 
-    Common.logger(
-      colors.red.bold("Add Funds to deal ID " + dealId + " requested.")
-    );
+	if (deal) {
 
-    let oldOrders = orders;
-    let exchange = await connectExchange(config).catch();
+		const config = JSON.parse(JSON.stringify(deal.config));
+		const orders = JSON.parse(JSON.stringify(deal.orders));
 
-    const ex = await exchange.loadMarkets();
+		Common.logger(
+			colors.red.bold('Add Funds to deal ID ' + dealId + ' requested.')
+		);
 
-    let exchangeFee = (volume / 100) * Number(config.exchangeFee);
-    volume = await filterPrice(exchange, config.pair, volume + exchangeFee);
+		let oldOrders = orders;
+		let exchange = await connectExchange(config).catch(console.log);
 
-    for (let i = 0; i < oldOrders.length; i++) {
-      if (!oldOrders[i].filled && !isUpdated) {
-        const symbolData = await getSymbol(exchange, config.pair);
-        const symbol = symbolData.data;
+		const ex = await exchange.loadMarkets();
 
-        const bidPrice = symbol.bid;
-        const askPrice = symbol.ask;
+		let exchangeFee = (volume / 100) * Number(config.exchangeFee);
+		volume = await filterPrice(exchange, config.pair, (volume + exchangeFee));
 
-        let newOrder = Object.assign({}, oldOrders[i]);
-        let price = await filterPrice(exchange, config.pair, askPrice);
-        let amount = await filterPrice(exchange, config.pair, volume);
-        let qty = await filterAmount(exchange, config.pair, volume / askPrice);
+		for (let i = 0; i < oldOrders.length; i++) {
 
-        let qtySum = parseFloat(qty) + parseFloat(oldOrders[i - 1].qtySum);
-        qtySum = await filterAmount(exchange, config.pair, qtySum);
+			if (!oldOrders[i].filled && !isUpdated) {
 
-        let orderSum = parseFloat(amount) + parseFloat(oldOrders[i - 1].sum);
-        orderSum = await filterPrice(exchange, config.pair, orderSum);
+				const symbolData = await getSymbol(exchange, config.pair);
+				const symbol = symbolData.data;
 
-        let sum = await filterPrice(exchange, config.pair, orderSum);
+				const bidPrice = symbol.bid;
+				const askPrice = symbol.ask;
 
-        const avgPrice = await filterPrice(
-          exchange,
-          config.pair,
-          parseFloat(orderSum) / parseFloat(qtySum)
-        );
+				let newOrder = Object.assign({}, oldOrders[i]);
+				let price = await filterPrice(exchange, config.pair, askPrice);
+				let amount = await filterPrice(exchange, config.pair, volume);
+				let qty = await filterAmount(exchange, config.pair, ((volume) / askPrice));
 
-        let targetPrice = Percentage.addPerc(
-          avgPrice,
-          config.dcaTakeProfitPercent
-        );
+				let qtySum = (parseFloat(qty) + parseFloat(oldOrders[i - 1].qtySum));
+				qtySum = await filterAmount(exchange, config.pair, qtySum);
 
-        targetPrice = await filterPrice(exchange, config.pair, targetPrice);
+				let orderSum = (parseFloat(amount) + parseFloat(oldOrders[i - 1].sum));
+				orderSum = await filterPrice(exchange, config.pair, orderSum);
 
-        if (
-          targetPrice != undefined &&
-          targetPrice != null &&
-          targetPrice != false &&
-          targetPrice > 0
-        ) {
-          isUpdated = true;
+				let sum = await filterPrice(exchange, config.pair, orderSum);
 
-          if (!config.sandBox) {
-            const buy = await buyOrder(
-              exchange,
-              dealId,
-              config.pair,
-              qty,
-              targetPrice
-            );
+				const avgPrice = await filterPrice(exchange, config.pair, (parseFloat(orderSum) / parseFloat(qtySum)));
 
-            if (!buy.success) {
-              success = false;
-              isUpdated = false;
-              msg = buy;
-            }
-          }
+				let targetPrice = Percentage.addPerc(
+					(avgPrice),
+					(config.dcaTakeProfitPercent)
+				);
 
-          newOrder.price = price;
-          newOrder.average = avgPrice;
-          newOrder.target = targetPrice;
-          newOrder.qty = qty;
-          newOrder.amount = amount;
-          newOrder.qtySum = qtySum;
-          newOrder.sum = orderSum;
-          newOrder.manual = true;
-          newOrder.filled = 1;
-          newOrder.dateFilled = new Date();
+				targetPrice = await filterPrice(exchange, config.pair, targetPrice);
 
-          oldOrders.splice(i, 0, newOrder);
-        }
-      } else if (isUpdated) {
-        let price = Percentage.subPerc(
-          oldOrders[i - 1].price,
-          config.dcaOrderStartDistance
-        );
+				if (targetPrice != undefined && targetPrice != null && targetPrice != false && targetPrice > 0) {
 
-        price = await filterPrice(exchange, config.pair, price);
+					isUpdated = true;
 
-        let orderSize = oldOrders[i].qty;
+					if (!config.sandBox) {
 
-        orderSize = await filterAmount(exchange, config.pair, orderSize);
+						const buy = await buyOrder(exchange, dealId, config.pair, qty, targetPrice);
 
-        let orderAmount = parseFloat(orderSize) * parseFloat(price);
-        orderAmount = await filterPrice(exchange, config.pair, orderAmount);
+						if (!buy.success) {
+	
+							success = false;
+							isUpdated = false;
+							msg = buy;
+						}
+					}
 
-        let orderSum =
-          parseFloat(orderAmount) + parseFloat(oldOrders[i - 1].sum);
-        orderSum = await filterPrice(exchange, config.pair, orderSum);
+					newOrder.price = price;
+					newOrder.average = avgPrice;
+					newOrder.target = targetPrice;
+					newOrder.qty = qty;
+					newOrder.amount = amount;
+					newOrder.qtySum = qtySum;
+					newOrder.sum = orderSum;
+					newOrder.manual = true;
+					newOrder.filled = 1;
+					newOrder.dateFilled = new Date();
 
-        let orderQtySum =
-          parseFloat(orderSize) + parseFloat(oldOrders[i - 1].qtySum);
-        orderQtySum = await filterAmount(exchange, config.pair, orderQtySum);
+					oldOrders.splice(i, 0, newOrder);
+				}
 
-        const avgPrice = await filterPrice(
-          exchange,
-          config.pair,
-          parseFloat(orderSum) / parseFloat(orderQtySum)
-        );
+			} else if (isUpdated) {
 
-        let targetPrice = Percentage.addPerc(
-          avgPrice,
-          config.dcaTakeProfitPercent
-        );
+				let price = Percentage.subPerc(
+					(oldOrders[i - 1].price),
+					(config.dcaOrderStartDistance)
+				);
 
-        targetPrice = await filterPrice(exchange, config.pair, targetPrice);
+				price = await filterPrice(exchange, config.pair, price);
 
-        oldOrders[i].orderNo = oldOrders[i].orderNo + 1;
-        oldOrders[i].price = price;
-        oldOrders[i].average = avgPrice;
-        oldOrders[i].target = targetPrice;
-        oldOrders[i].qty = orderSize;
-        oldOrders[i].amount = orderAmount;
-        oldOrders[i].qtySum = orderQtySum;
-        oldOrders[i].sum = orderSum;
-      }
-    }
+				let orderSize = (oldOrders[i].qty);
 
-    if (success) {
-      const botId = deal.botId;
-      const config = deal.config;
+				orderSize = await filterAmount(exchange, config.pair, orderSize);
 
-      let dataUpdate = await updateDeal(botId, dealId, {
-        config: config,
-        orders: oldOrders,
-      });
-    }
-  } else {
-    success = false;
-    msg = "Deal ID not found";
-  }
+				let orderAmount = parseFloat(orderSize) * parseFloat(price);
+				orderAmount = await filterPrice(exchange, config.pair, orderAmount);
 
-  return { success: success, data: msg };
+				let orderSum = parseFloat(orderAmount) + parseFloat(oldOrders[i - 1].sum);
+				orderSum = await filterPrice(exchange, config.pair, orderSum);
+
+				let orderQtySum = parseFloat(orderSize) + parseFloat(oldOrders[i - 1].qtySum);
+				orderQtySum = await filterAmount(exchange, config.pair, orderQtySum);
+
+				const avgPrice = await filterPrice(exchange, config.pair, parseFloat(orderSum) / parseFloat(orderQtySum));
+
+				let targetPrice = Percentage.addPerc(
+					(avgPrice),
+					(config.dcaTakeProfitPercent)
+				);
+
+				targetPrice = await filterPrice(exchange, config.pair, targetPrice);
+
+				oldOrders[i].orderNo = oldOrders[i].orderNo + 1;
+				oldOrders[i].price = price;
+				oldOrders[i].average = avgPrice;
+				oldOrders[i].target = targetPrice;
+				oldOrders[i].qty = orderSize;
+				oldOrders[i].amount = orderAmount;
+				oldOrders[i].qtySum = orderQtySum;
+				oldOrders[i].sum = orderSum;
+			}
+		}
+
+		//console.table(oldOrders);
+
+		if (success) {
+
+			const botId = deal.botId;
+			const config = deal.config;
+
+			let dataUpdate = await updateDeal(botId, dealId, {
+				config: config,
+				orders: oldOrders,
+			});
+		}
+	}
+	else {
+
+		success = false;
+		msg = 'Deal ID not found';
+	}
+
+	return ( { 'success': success, 'data': msg } );
 }
+
 
 async function applyConfigData(data) {
-  let botId = data["bot_id"];
-  let botName = data["bot_name"];
-  let signalId = data["signal_id"];
-  let config = data["config"];
 
-  // Pass bot id in config so existing bot is used
-  config["botId"] = botId;
-  config["botName"] = botName;
+	let botId = data['bot_id'];
+	let botName = data['bot_name'];
+	let signalId = data['signal_id'];
+	let config = data['config'];
 
-  // Don't reset deal count
-  if (
-    config["dealCount"] == undefined ||
-    config["dealCount"] == null ||
-    config["dealCount"] == ""
-  ) {
-    config["dealCount"] = 0;
-  }
+	// Pass bot id in config so existing bot is used
+	config['botId'] = botId;
+	config['botName'] = botName;
 
-  // Set signal id if present
-  if (signalId != undefined && signalId != null && signalId != "") {
-    config["signalId"] = signalId;
-  }
+	// Don't reset deal count
+	if (config['dealCount'] == undefined || config['dealCount'] == null || config['dealCount'] == '') {
 
-  return config;
+		config['dealCount'] = 0;
+	}
+
+	// Set signal id if present
+	if (signalId != undefined && signalId != null && signalId != '') {
+
+		config['signalId'] = signalId;
+	}
+
+	return config;
 }
+
 
 async function startDelay(dataObj) {
-  const data = JSON.parse(JSON.stringify(dataObj));
 
-  const config = data["config"];
-  const notify = data["notify"];
+	const data = JSON.parse(JSON.stringify(dataObj));
 
-  // Start bot
-  setTimeout(() => {
-    if (notify) {
-      let msg =
-        config.botName +
-        " (" +
-        config.pair.toUpperCase() +
-        ") Start command received.";
+	const config = data['config'];
+	const notify = data['notify'];
 
-      Common.sendNotification({
-        message: msg,
-        type: "bot_start",
-        telegram_id: shareData.appData.telegram_id,
-      });
-    }
+	// Start bot
+	setTimeout(() => {
+						if (notify) {
 
-    startVerify(config);
-    //start({ 'create': true, 'config': config });
-  }, 1000 * data["delay"]);
+							let msg = config.botName + ' (' + config.pair.toUpperCase() + ') Start command received.';
+
+							Common.sendNotification({ 'message': msg, 'type': 'bot_start', 'telegram_id': shareData.appData.telegram_id });
+						}
+
+						startVerify(config);
+						//start({ 'create': true, 'config': config });
+
+					 }, (1000 * (data['delay'])));
 }
+
 
 async function initApp() {
-  setInterval(() => {
-    checkTracker();
-  }, 60000 * 1);
 
-  await resumeBots();
+	setInterval(() => {
 
-  startSignals();
+		checkTracker();
+
+	}, (60000 * 1));
+
+	await resumeBots();
+
+	startSignals();
 }
 
-// async function test() {
-//   console.log("--------------------------------------------------------------");
-//   const logget=await start({ create: false, config: data})
-//   console.log("logget",logget);
-// }
-// test() 
 
 module.exports = {
-  colors,
-  start,
-  updateBot,
-  sendBotStatus,
-  ordersValid,
-  updateOrders,
-  cancelDeal,
-  pauseDeal,
-  stopDeal,
-  updateDeal,
-  refreshUpdateDeal,
-  addFundsDeal,
-  panicSellDeal,
-  connectExchange,
-  removeConfigData,
-  initBot,
-  getBots,
-  getDeals,
-  getDealInfo,
-  getDealTracker,
-  getSymbol,
-  getSymbolsAll,
-  applyConfigData,
-  startDelay,
-  resumeDeal,
 
-  init: function (obj) {
-    shareData = obj;
+	colors,
+	start,
+	updateBot,
+	sendBotStatus,
+	ordersValid,
+	updateOrders,
+	cancelDeal,
+	pauseDeal,
+	stopDeal,
+	updateDeal,
+	refreshUpdateDeal,
+	addFundsDeal,
+	panicSellDeal,
+	connectExchange,
+	removeConfigData,
+	initBot,
+	getBots,
+	getDeals,
+	getDealInfo,
+	getDealTracker,
+	getSymbol,
+	getSymbolsAll,
+	applyConfigData,
+	startDelay,
+	resumeDeal,
 
-    initApp();
-  },
-};
+	init: function(obj) {
+
+		shareData = obj;
+
+		initApp();
+    }
+}
