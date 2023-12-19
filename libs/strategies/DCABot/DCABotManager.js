@@ -451,7 +451,6 @@ async function apiUpdateDeal(req, res) {
 
 	let content;
 	const body = req.body;
-	console.log("apiupdate deal function",body);
 	const dealId = req.params.dealId;
 
 	let dealLast = body.dealLast;
@@ -549,7 +548,6 @@ async function apiUpdateDeal(req, res) {
 				if (isUpdate) {
 					// Get newly calculated order steps if update required
 					data = await calculateOrders(config);
-					console.log(data);
 				}
 
 				// Remove and replace config data
@@ -560,12 +558,10 @@ async function apiUpdateDeal(req, res) {
 				config["botId"] = configOrig["botId"];
 				config["botName"] = configOrig["botName"];
 
-				console.log("data:", data);
-				console.log("data['orders']:", data["orders"]);
+		
 
 				// Only calculate if orders or tp were set
 				if (data ) {
-					console.log("-------------------enter");
 					// let orderHeaders = data["orders"]["data"]["orders"]["headers"];
 					let orderSteps = data["orders"]["data"]["orders"]["steps"];
 					let orderContent = data["orders"]["data"]["content"];
@@ -576,7 +572,6 @@ async function apiUpdateDeal(req, res) {
 						orig: [],
 						new: orderSteps,
 					});
-					console.log("ordersNew=>>>>>>>>>>",ordersNew);
 					let ordersValidate = await shareData.DCABot.ordersValid(
 						dealData["pair"],
 						ordersNew
@@ -1359,7 +1354,6 @@ async function calculateOrders(body) {
 	} else {
 		botData.startConditions = body.startCondition;
 	}
-	console.log("body",body);
 	// Remove empty conditions
 	botData.startConditions = botData.startConditions.filter((a) => a);
 
@@ -1428,10 +1422,8 @@ async function calculateOrders(body) {
 	botData.botName = botName;
 
 	// Only get orders, don't start bot
-	console.log("botData",botData);
 
 	let orders = await shareData.DCABot.start({ create: false, config: botData });
-	console.log("orders",orders);
 
 	return { active: active, pairs: pairs, orders: orders, botData: botData };
 }

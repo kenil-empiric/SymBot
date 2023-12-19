@@ -263,7 +263,6 @@ function initRoutes(router) {
 
 	router.post([ '/api/deals/:dealId/update_deal' ], (req, res) => {
 
-		console.log("tu bhdwa he",req.body);
 		if (req.session.loggedIn || validApiKey(req)) {
 			shareData.DCABotManager.apiUpdateDeal(req, res);
 		}

@@ -37,51 +37,10 @@ let timerTracker = {};
 let startDealTracker = {};
 
 let shareData;
-// for (const exchangeId of ccxt.exchanges) {
-//     try {
-//         const exchange = new ccxt[exchangeId]()
-//         if (exchange.urls.test) {
-//             console.log (exchange.id, 'has a testnet')
-//         }
-//     } catch (e) {
-//     }
-// }
-const data={
-	apiKey: '45d84ddd-d366-41f3-ab0d-366d0135657a',
-	apiPassphrase: 'Mraj@1802',
-	apiPassword: null,
-	apiSecret: '373D7B04FEDE63B0E0424666D98B56DD',
-	dcaMaxOrder: '3',
-	dcaOrderAmount: '45',
-	dcaOrderSizeMultiplier: '1.08',
-	dcaOrderStartDistance: '1.3',
-	dcaOrderStepPercent: '1.3',
-	dcaOrderStepPercentMultiplier: '1',
-	dcaTakeProfitPercent: '1.5',
-	exchange: 'coinbasepro',
-	exchangeFee: 0.45,
-	exchangeOptions: { defaultType: 'spot' },
-	firstOrderAmount: '20',
-	firstOrderLimitPrice: 1300,
-	firstOrderType: undefined,
-	pair: 'ETH/USDT',
-	sandBox: true,
-	sandBoxWallet: 100,
-	startConditions: [ 'asap' ],
-	dealMax: 0,
-	dealCoolDown: 0,
-	pairMax: 0,
-	pairDealsMax: 0,
-	volumeMin: '',
-	firstOrderPrice: '2252.84',
-	botName: 'DCA Bot ETH/USDT'
-}
-
 
 
 async function start(dataObj, startId) {
 	let startBot = dataObj["create"];
-	console.log("dataObj____________________________________enter");
 	let data = await initBot({
 		create: startBot,
 		config: JSON.parse(JSON.stringify(dataObj["config"])),
@@ -91,11 +50,9 @@ async function start(dataObj, startId) {
 
 	delete data["dealResumeId"];
 	delete data["firstOrderPrice"];
-	console.log("dataObj___________________1_________________enter");
 
 	const config = Object.freeze(JSON.parse(JSON.stringify(data)));
 
-	console.log("config is here:", config);
 
 	let dealIdMain;
 	let botConfigDb;
@@ -225,7 +182,6 @@ async function start(dataObj, startId) {
 		}
 
 		let askPrice = symbol.ask;
-		console.log("dataObj_______________2_____________________enter");
 
 		// Override price if passed in
 		if (
@@ -291,7 +247,6 @@ async function start(dataObj, startId) {
 			}
 			//   if (config.firstOrderType() == "MARKET") {
 			//     //first order market
-			//     console.log("---------enter -------MARKET-------------");
 			//     if (shareData.appData.verboseLog) {
 			//       Common.logger(
 			//         colors.bgGreen("Calculating orders for " + pair + "...")
@@ -305,11 +260,6 @@ async function start(dataObj, startId) {
 
 				return;
 			}
-
-			console.log("config file is as:", config);
-
-			console.log("typeOF", typeof(config.firstOrderType));
-			console.log("firstOrderType", config.firstOrderType);
 
 			if (config.firstOrderType.toUpperCase() === 'MARKET') {
 
@@ -334,11 +284,11 @@ async function start(dataObj, startId) {
 					const price = await filterPrice(exchange, pair, askPrice);
 
 					let amount = price * firstOrderSize;
-					let exchangeFee = (amount / 100) * Number(config.exchangeFee);
+					totalAmount = await filterPrice(exchange, pair, totalAmount);
 
-					// amount = await filterPrice(exchange, pair, amount + exchangeFee);
-					console.log("dataObj___________________3_________________enter");
+					let exchangeFee = (totalAmount / 100) * Number(config.exchangeFee);
 
+					totalAmount = await filterPrice(exchange, pair,  Number(totalAmount) +Number(exchangeFee));
 					let targetPrice = Percentage.addPerc(
 						price,
 						config.dcaTakeProfitPercent
@@ -361,7 +311,7 @@ async function start(dataObj, startId) {
 
 					lastDcaOrderAmount = totalAmount;
 					lastDcaOrderSize = firstOrderSize;
-					lastDcaOrderSum = amount;
+					lastDcaOrderSum = totalAmount;
 					lastDcaOrderQtySum = firstOrderSize;
 					lastDcaOrderPrice = price;
 				}
@@ -379,19 +329,16 @@ async function start(dataObj, startId) {
 
 						// let dcaOrderAmount = dcaOrderSize * price;
 						let dcaOrderAmount = config.dcaOrderAmount;
+					    let exchangeFee = (dcaOrderAmount / 100) * Number(config.exchangeFee);
+						dcaOrderAmount	 = await filterPrice(exchange, pair, Number(dcaOrderAmount)+Number(exchangeFee));
 
-						let dcaOrderSum =
+
+						let dcaOrderSum = 
 							parseFloat(dcaOrderAmount) + parseFloat(lastDcaOrderAmount);
 						dcaOrderSum = await filterPrice(exchange, pair, dcaOrderSum);
 
 						const dcaOrderQtySum =
 							parseFloat(dcaOrderSize) + parseFloat(firstOrderSize);
-
-						lastDcaOrderAmount = dcaOrderAmount;
-						lastDcaOrderSize = dcaOrderSize;
-						lastDcaOrderSum = dcaOrderSum;
-						lastDcaOrderPrice = price;
-						lastDcaOrderQtySum = dcaOrderQtySum;
 
 						const average = await filterPrice(
 							exchange,
@@ -405,7 +352,12 @@ async function start(dataObj, startId) {
 						);
 
 						targetPrice = await filterPrice(exchange, pair, targetPrice);
-						console.log("dataObj________________4____________________enter");
+
+						lastDcaOrderAmount = dcaOrderAmount;
+						lastDcaOrderSize = dcaOrderSize;
+						lastDcaOrderSum = dcaOrderSum;
+						lastDcaOrderPrice = price;
+						lastDcaOrderQtySum = dcaOrderQtySum;
 
 						orders.push({
 							orderNo: i + 2,
@@ -443,11 +395,9 @@ async function start(dataObj, startId) {
 						let exchangeFee = (amount / 100) * Number(config.exchangeFee);
 
 						// Fee already applied previously
-						amount = await filterAmount(exchange, pair, amount);
 						let dcaOrderSize = amount / price;
-
 						dcaOrderSize = await filterAmount(exchange, pair, dcaOrderSize);
-
+						amount = await filterAmount(exchange, pair, Number(amount) + Number(exchangeFee));
 						let dcaOrderSum = parseFloat(amount) + parseFloat(lastDcaOrderSum);
 						dcaOrderSum = await filterPrice(exchange, pair, dcaOrderSum);
 
@@ -473,7 +423,6 @@ async function start(dataObj, startId) {
 						);
 
 						targetPrice = await filterPrice(exchange, pair, targetPrice);
-						console.log("dataObj_________________5___________________enter");
 
 						orders.push({
 							orderNo: i + 2,
@@ -537,7 +486,6 @@ async function start(dataObj, startId) {
 						);
 					}
 				}
-				console.log("dataObj_________________6___________________enter");
 
 				if (shareData.appData.verboseLog) {
 					Common.logger(colors.bgWhite("Your Balance: $" + wallet));
@@ -617,7 +565,6 @@ async function start(dataObj, startId) {
 							await Common.delay(1000);
 						}
 					}
-					console.log("dataObj_______________7_____________________enter");
 
 					if (followFinished) {
 						//break;
@@ -635,7 +582,6 @@ async function start(dataObj, startId) {
 			//if body end here
 			else {
 				//first order limit
-				console.log("---------enter -------limit-------------");
 
 				if (shareData.appData.verboseLog) {
 					Common.logger(colors.bgGreen("Calculating orders..."))
@@ -660,13 +606,13 @@ async function start(dataObj, startId) {
 				} else {
 					totalOrderSize = firstOrderSize;
 					totalAmount = config.firstOrderAmount;
-
 					const price = await filterPrice(exchange, pair, askPrice);
 
 					let amount = price * firstOrderSize;
 					let exchangeFee = (amount / 100) * Number(config.exchangeFee);
 
 					//   amount = await filterPrice(exchange, pair, amount + exchangeFee);
+					totalAmount = await filterPrice(exchange, pair,  Number(totalAmount) +Number(exchangeFee));
 
 					let targetPrice = Percentage.addPerc(
 						price,
@@ -687,11 +633,10 @@ async function start(dataObj, startId) {
 						type: "LIMIT",
 						filled: 0,
 					});
-					console.log("dataObj________________l1____________________enter");
 
 					lastDcaOrderAmount = totalAmount;
 					lastDcaOrderSize = firstOrderSize;
-					lastDcaOrderSum = amount;
+					lastDcaOrderSum = totalAmount;
 					lastDcaOrderQtySum = firstOrderSize;
 					lastDcaOrderPrice = price;
 				}
@@ -712,12 +657,11 @@ async function start(dataObj, startId) {
 						let exchangeFee =
 							(dcaOrderAmount / 100) * Number(config.exchangeFee);
 
-						// dcaOrderAmount = await filterPrice(
-						//   exchange,
-						//   pair,
-						//   dcaOrderAmount + exchangeFee
-						// );
-						console.log("dataObj________________l2____________________enter");
+						dcaOrderAmount = await filterPrice(
+						  exchange,
+						  pair,
+						  Number(dcaOrderAmount) + Number(exchangeFee)
+						);
 
 						let dcaOrderSum =
 							parseFloat(dcaOrderAmount) + parseFloat(lastDcaOrderAmount);
@@ -769,11 +713,12 @@ async function start(dataObj, startId) {
 						price = await filterPrice(exchange, pair, price);
 
 						let amount = lastDcaOrderAmount * config.dcaOrderSizeMultiplier;
-						amount = await filterPrice(exchange, pair, amount);
-						let exchangeFee = (amount / 100) * Number(config.exchangeFee);
+						
 						let dcaOrderSize = amount / price;
 						dcaOrderSize = await filterAmount(exchange, pair, dcaOrderSize);
 
+						let exchangeFee = (amount / 100) * Number(config.exchangeFee);
+						amount = await filterPrice(exchange, pair, Number(amount) + Number(exchangeFee));
 						let dcaOrderSum = parseFloat(amount) + parseFloat(lastDcaOrderSum);
 						dcaOrderSum = await filterPrice(exchange, pair, dcaOrderSum);
 
@@ -786,7 +731,6 @@ async function start(dataObj, startId) {
 						lastDcaOrderSum = dcaOrderSum;
 						lastDcaOrderPrice = price;
 						lastDcaOrderQtySum = dcaOrderQtySum;
-						console.log("dataObj________________l3____________________enter");
 
 						const average = await filterPrice(
 							exchange,
@@ -861,7 +805,6 @@ async function start(dataObj, startId) {
 						);
 					}
 				}
-				console.log("dataObj________________l4____________________enter");
 
 				if (shareData.appData.verboseLog) {
 					Common.logger(colors.bgWhite("Your Balance: $" + wallet));
@@ -895,7 +838,6 @@ async function start(dataObj, startId) {
 						},
 					};
 				}
-				console.log("dataObj________________l5____________________enter");
 
 				if (startBot) {
 					const dealObj = await createDeal(
@@ -941,7 +883,6 @@ async function start(dataObj, startId) {
 
 						followSuccess = followRes["success"];
 						followFinished = followRes["finished"];
-						console.log("dataObj________________l6____________________enter");
 
 						if (!followSuccess) {
 							await Common.delay(1000);
@@ -961,7 +902,6 @@ async function start(dataObj, startId) {
 		}
 	} catch (e) {
 		Common.logger(e);
-		console.log(e);
 		//(e);
 	}
 
@@ -1470,7 +1410,6 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 
 				for (let i = 0; i < orders.length; i++) {
 					const order = orders[i];
-					// console.log("This is  order",order);
 					// Check if max safety orders used, otherwise sell order condition will not be checked
 					if (order.filled == 0 || maxSafetyOrdersUsed) {
 						if (price <= parseFloat(order.price) && order.filled == 0) {
@@ -2025,7 +1964,7 @@ async function openWatchDog(orderId, price, pair, exchange) {
 			let inc = 0;
 
 			const order = await exchange.fetchOrder(orderId, pair);
-			console.log(`Order Status ${inc} for Order ID ${orderId} & for the pair ${pair} at${price}: ${order.status}`);
+			// console.log(`Order Status ${inc} for Order ID ${orderId} & for the pair ${pair} at${price}: ${order.status}`);
 
 			// Check if the order is closed or filled
 			if (order.status === "closed" || order.status === "filled") {
@@ -2081,7 +2020,9 @@ const buyLimitOrder = async (exchange, dealId, pair, qty, price) => {
 
 	try {
 		order = await exchange.createOrder(pair, "limit", "buy", qty, price);
-		if (order.status === "open" || order.status === "OPEN") {
+		// console.log("order is done ",order);
+		
+		if (order.status === "open" || order.status === "OPEN" || order.status === undefined ) {
 			let result = await openWatchDog(
 				order.id,
 				order.price,
@@ -2243,7 +2184,6 @@ async function connectExchange(configObj) {
 
 	try {
 
-		console.log("config exchange", config.exchange);
 		if (
 			config.exchangeOptions != undefined &&
 			config.exchangeOptions != null &&
@@ -2258,80 +2198,6 @@ async function connectExchange(configObj) {
 		) {
 			exchange = shareData.appData.exchanges[config.exchange];
 		} else {
-			if (config.exchange == "binance" || config.exchange == "BINANCE") {
-				exchange = new ccxt[config.exchange]({
-					enableRateLimit: true,
-					apiKey: config.apiKey,
-					secret: config.apiSecret,
-					passphrase: config.apiPassphrase,
-					password: config.apiPassword,
-					options: options,
-				});
-
-				exchange.setSandboxMode(true); //it will activate Test modes
-				await exchange.loadMarkets();
-			}
-			else if(config.exchange == "bybit" || config.exchange == "BYBIT"){
-				exchange = new ccxt[config.exchange]({
-					enableRateLimit: true,
-					apiKey: config.apiKey,
-					secret: config.apiSecret,
-					passphrase: config.apiPassphrase,
-					password: config.apiPassword,
-					options: options,
-				});
-
-				exchange.setSandboxMode(true); //it will activate Test modes
-				const ex= await exchange.fetchBalance()
-				const usdt=await  ex.BTC
-				await exchange.loadMarkets();
-
-			}
-
-			else if(config.exchange == "okx" || config.exchange == "OKX"){
-				console.log("in okx")
-
-				// exchange = new ccxt[config.exchange]({
-				//   enableRateLimit: true,
-				//   apiKey: config.apiKey,
-				//   secret: config.apiSecret,
-				//   passphrase: config.apiPassphrase,
-				//   password: config.apiPassword,
-				//   options: options,
-				// });
-
-				exchange = new ccxt.pro[config.exchange]({
-					// enableRateLimit: true,
-
-					apiKey: "45d84ddd-d366-41f3-ab0d-366d0135657a",
-					secret: "373D7B04FEDE63B0E0424666D98B56DD",
-
-					// passphrase: config.apiPassphrase,
-
-					password: "Mraj@1802",
-					options: options,
-				});
-
-				exchange.setSandboxMode(true);
-
-				// console.log("exchange", exchange);
-
-				const balance= await exchange.fetchBalance();
-				console.log("balance is:", balance.USDT);
-				await exchange.loadMarkets();
-
-
-				exchange.setSandboxMode(true); //it will activate Test modes
-				// const usdt=await  balance.BTC;
-				console.log("--------");
-				const symbols = await exchange.getSymbol();
-
-				console.log("sym", symbols);
-				// console.log("balance is", balance);
-			}
-
-			else if(config.exchange == "bitmex" || config.exchange == "BITMEX"){
-
 				exchange = new ccxt.pro[config.exchange]({
 					enableRateLimit: true,
 					apiKey: config.apiKey,
@@ -2340,45 +2206,15 @@ async function connectExchange(configObj) {
 					password: config.apiPassword,
 					options: options,
 				});
-
 				exchange.setSandboxMode(true); //it will activate Test modes
 				const ex= await exchange.fetchBalance()
 				const BTC=await  ex.BTC
 				const usdt=await ex.USDT
-				// console.log("----------------2",BTC,usdt);
 				await exchange.loadMarkets();
-			}
-			else {
-				exchange = new ccxt.pro[config.exchange]({
-					enableRateLimit: true,
-					apiKey: config.apiKey,
-					secret: config.apiSecret,
-					passphrase: config.apiPassphrase,
-					password: config.apiPassword,
-					options: options,
-				});
-
-				// exchange = new ccxt.pro[config.exchange]({
-				//   enableRateLimit: true,
-				//   apiKey: config.apiKey,
-				//   secret: config.apiSecret,
-				//   passphrase: config.apiPassphrase,
-				//   password: config.apiPassword,
-				//   options: options,
-				// });
-
-				// exchange.setSandboxMode(true); //it will activate Test modes
-				// const ex= await exchange.fetchBalance()
-				// const BTC=await  ex.BTC
-				// const usdt=await ex.USDT
-				// console.log("----------------2",BTC,usdt);
-				// await exchange.loadMarkets();
-			}
 			shareData.appData.exchanges[config.exchange] = exchange;
 		}
 	} catch (e) {
 		let msg = "Connect exchange error: " + e;
-		// console.log(msg);
 		Common.logger(msg);
 
 		Common.sendNotification({
@@ -2522,7 +2358,6 @@ async function deleteDeal(dealId) {
 	let dealData;
 	let success = true;
 
-	// console.log("enter Deletedeal function");
 	try {
 		dealData = await Deals.deleteOne({
 			dealId: dealId,
@@ -3825,12 +3660,6 @@ async function initApp() {
 	startSignals();
 }
 
-// async function test() {
-//   console.log("--------------------------------------------------------------");
-//   const logget=await start({ create: false, config: data})
-//   console.log("logget",logget);
-// }
-// test()
 
 module.exports = {
 

@@ -211,7 +211,7 @@
 			showStartConditionsSub(val);
 		});
 
-		$('#orderType').val('<%- botData.firstOrderType %>');
+		$('#firstOrderType').val('<%- botData.firstOrderType %>');
 
 
 
@@ -804,7 +804,7 @@
 				</td> <td><input id="dealCoolDown" name="dealCoolDown" value="<%- botData.dealCoolDown %>" class="form-field"> Seconds</td></tr>
 				<td>Order Type:</td>
 				<td>
-				  <select id="orderType" name="orderType" class="form-field" style="width: 200px;">
+				  <select id="firstOrderType" name="firstOrderType" class="form-field" style="width: 200px;">
 					<option value="MARKET" <%- botData.firstOrderType === 'MARKET' ? 'selected' : '' %>>MARKET</option>
 					<option value="LIMIT" <%- botData.firstOrderType === 'LIMIT' ? 'selected' : '' %>>LIMIT</option>
 				  </select>
