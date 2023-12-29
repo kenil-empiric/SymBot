@@ -702,7 +702,9 @@ async function apiCancelDeal(req, res) {
 			success = false;
 			content = "Deal ID " + dealId + " is not active";
 		} else {
-			const cancelData = await shareData.DCABot.cancelDeal(dealId);
+			let botId = data[0].botId;
+            await shareData.DCABot.updateBot(botId, { active: false });
+            const cancelData = await shareData.DCABot.cancelDeal(dealId);
 
 			if (!cancelData["success"]) {
 				success = false;
