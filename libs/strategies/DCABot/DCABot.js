@@ -16,7 +16,6 @@ const colors = require("colors");
 const ccxt = require("ccxt");
 const Table = require("easy-table");
 const Percentage = require("percentagejs");
-const { log } = require("console");
 const Common = require(pathRoot + "/libs/app/Common.js");
 const Schema = require(pathRoot + "/libs/mongodb/DCABotSchema");
 // const {binaryConcat} = require("ccxt/js/src/base/functions/encode");
@@ -411,7 +410,6 @@ async function start(dataObj, startId) {
 						lastDcaOrderSum = dcaOrderSum;
 						lastDcaOrderPrice = price;
 						lastDcaOrderQtySum = dcaOrderQtySum;
-
 						const average = await filterPrice(
 							exchange,
 							pair,
@@ -1081,9 +1079,11 @@ async function start(dataObj, startId) {
 }
 
 //for auto
+
+let ordersIdsOnly=[];
+
 const dcaFollow = async (configDataObj, exchange, dealId) => {
 	let configData = JSON.parse(JSON.stringify(configDataObj));
-
 	if (
 		shareData.appData.database_error != undefined &&
 		shareData.appData.database_error != null &&
@@ -1212,101 +1212,21 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 			let orders = deal.orders;
 
 			if (deal.isStart == 0) {
-				const baseOrder = deal.orders[0];
-				targetPrice = baseOrder.target;
+					const baseOrder = deal.orders.slice(0,config.dcaActiveMaxOrder);
+					targetPrice = baseOrder.target;
+					"basOrder type", baseOrder.type;
+					if (baseOrder[0].type == "MARKET") {
+						//Send market order to exchange
 
-				"basOrder type", baseOrder.type;
-
-				if (baseOrder.type == "MARKET") {
-					//Send market order to exchange
-
-					if (!config.sandBox) {
-						const priceFiltered = await filterPrice(exchange, pair, price);
-						const buy = await buyOrder(
-							exchange,
-							dealId,
-							pair,
-							baseOrder.qty,
-							priceFiltered
-						);
-						if (!buy.success) {
-							let finished = false;
-
-							const statusObj = await orderError({
-								bot_id: config.botId,
-								bot_name: config.botName,
-								deal_id: dealId,
-							});
-
-							if (statusObj["success"]) {
-								await deleteDeal(dealId);
-								finished = true;
-							}
-
-							return { success: false, finished: finished };
-						}
-					}
-
-					orders[0].filled = 1;
-					orders[0].dateFilled = new Date();
-
-					if (shareData.appData.verboseLog) {
-						Common.logger(
-							colors.green.bold.italic(
-								"Pair: " +
-								pair +
-								"\tQty: " +
-								baseOrder.qty +
-								"\tPrice: " +
-								baseOrder.price +
-								"\tAmount: " +
-								baseOrder.amount +
-								"\tStatus: Filled"
-							)
-						);
-					}
-
-					let orderData = await ordersCreateTable({
-						config: config,
-						orders: orders,
-					});
-
-					let t = orderData["table"];
-					let maxDeviation = orderData["max_deviation"];
-
-					//(t.toString());
-					//Common.logger(t.toString());
-
-					await updateDealTracker({
-						deal_id: dealId,
-						price: price,
-						config: config,
-						orders: orders,
-					});
-
-					await Deals.updateOne(
-						{
-							dealId: dealId,
-						},
-						{
-							isStart: 1,
-							orders: orders,
-						}
-					);
-				} else {
-					//send limit order
-					if (price <= baseOrder.price) {
 						if (!config.sandBox) {
 							const priceFiltered = await filterPrice(exchange, pair, price);
-
-							const buy = await buyLimitOrder(
+							const buy = await buyOrder(
 								exchange,
 								dealId,
 								pair,
 								baseOrder.qty,
 								priceFiltered
 							);
-
 							if (!buy.success) {
 								let finished = false;
 
@@ -1318,7 +1238,6 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 
 								if (statusObj["success"]) {
 									await deleteDeal(dealId);
-
 									finished = true;
 								}
 
@@ -1349,12 +1268,13 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 							config: config,
 							orders: orders,
 						});
-
+							
 						let t = orderData["table"];
 						let maxDeviation = orderData["max_deviation"];
 
 						//(t.toString());
 						//Common.logger(t.toString());
+
 						await updateDealTracker({
 							deal_id: dealId,
 							price: price,
@@ -1372,21 +1292,103 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 							}
 						);
 					} else {
-						if (shareData.appData.verboseLog) {
-							Common.logger(
-								"DCA BOT will start when price react " +
-								baseOrder.price +
-								", now price is " +
-								price +
-								""
+						//send limit order
+						let buy=""
+						let createOd=""
+							if (!config.sandBox) {
+
+								// Active orders loop
+								for(let order of baseOrder){
+									const priceFiltered = await filterPrice(exchange, pair, order.price);
+								
+									createOd= await exchange.createOrder(pair, "limit", "buy", order.qty, priceFiltered);
+									orders[order.orderNo-1].active = true;
+									orders[order.orderNo-1].OrderID = createOd.id;
+									orders[order.orderNo-1].symbol = createOd.symbol;	
+								}
+
+								const activeOrdersCount = orders.filter(order => order.active === true).length;
+								const priceFiltered1 = await filterPrice(exchange, pair, orders[0].price);
+
+								if(activeOrdersCount == config.dcaActiveMaxOrder ){
+									buy = await buyLimitOrder(
+											exchange,
+											dealId,
+											pair,
+											orders[0].qty,
+											priceFiltered1,
+											orders[0].orderNo,
+											orders[0].OrderID
+										);
+								}
+								
+								if (!buy.success) {
+									let finished = false;
+
+									const statusObj = await orderError({
+										bot_id: config.botId,
+										bot_name: config.botName,
+										deal_id: dealId,
+									});
+
+									if (statusObj["success"]) {
+										await deleteDeal(dealId);
+
+										finished = true;
+									}
+
+									return { success: false, finished: finished };
+								}
+							}
+
+							orders[buy.orderNo-1].filled = 1;
+							orders[buy.orderNo-1].dateFilled = new Date();
+							if (shareData.appData.verboseLog) {
+								Common.logger(
+									colors.green.bold.italic(
+										"Pair: " +
+										pair +
+										"\tQty: " +
+										baseOrder.qty +
+										"\tPrice: " +
+										baseOrder.price +
+										"\tAmount: " +
+										baseOrder.amount +
+										"\tStatus: Filled"
+									)
+								);
+							}
+
+							let orderData = await ordersCreateTable({
+								config: config,
+								orders: orders,
+							});
+
+							let t = orderData["table"];
+							let maxDeviation = orderData["max_deviation"];
+
+							//Common.logger(t.toString());
+							await updateDealTracker({
+								deal_id: dealId,
+								price: price,
+								config: config,
+								orders: orders,
+							});
+
+							await Deals.updateOne(
+								{
+									dealId: dealId,
+								},
+								{
+									isStart: 1,
+									orders: orders,
+								}
 							);
-						}
-					}
-				}
+			    }
+
 			} else {
 				const filledOrders = deal.orders.filter((item) => item.filled == 1);
 				const currentOrder = filledOrders.pop();
-
 				let profit = await Percentage.subNumsAsPerc(
 					price,
 					currentOrder.average
@@ -1403,18 +1405,19 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 				let count = 0;
 				let maxSafetyOrdersUsed = false;
 				let ordersFilledTotal = filledOrders.length;
-
 				if (ordersFilledTotal >= orders.length - 1) {
 					maxSafetyOrdersUsed = true;
 				}
-
 				for (let i = 0; i < orders.length; i++) {
 					const order = orders[i];
 					// Check if max safety orders used, otherwise sell order condition will not be checked
-					if (order.filled == 0 || maxSafetyOrdersUsed) {
-						if (price <= parseFloat(order.price) && order.filled == 0) {
+					if (order.active == undefined  || maxSafetyOrdersUsed) {
+						if (order.filled == 0) {
+						// if (order.active == undefined) {
 							//Buy DCA
-							if (order.type == "MARKET") {
+							let buy=""
+							let createOd=""
+							if ( order.type == "MARKET" ) {
 								if (!config.sandBox) {
 									const priceFiltered = await filterPrice(
 										exchange,
@@ -1422,7 +1425,7 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 										price
 									);
 
-									const buy = await buyOrder(
+									buy = await buyOrder(
 										exchange,
 										dealId,
 										pair,
@@ -1436,20 +1439,28 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 								}
 							} else {
 								if (!config.sandBox) {
+
+									const priceFiltered1= await filterPrice(exchange, pair, orders[i-config.dcaActiveMaxOrder].price);
+									buy = await buyLimitOrder(
+										exchange,
+										dealId,
+										pair,
+										orders[i-config.dcaActiveMaxOrder].qty,
+										priceFiltered1,
+										orders[i-config.dcaActiveMaxOrder].orderNo,
+										orders[i-config.dcaActiveMaxOrder].OrderID
+									);
+
 									const priceFiltered = await filterPrice(
 										exchange,
 										pair,
 										order.price
 									);
-
-									const buy = await buyLimitOrder(
-										exchange,
-										dealId,
-										pair,
-										order.qty,
-										priceFiltered
-									);
-
+									createOd= await exchange.createOrder(pair, "limit", "buy", order.qty, priceFiltered);
+									orders[order.orderNo-1].active = true;
+									orders[order.orderNo-1].OrderID = createOd.id;
+									orders[order.orderNo-1].symbol = createOd.symbol;	
+						
 									if (!buy.success) {
 										return { success: false, finished: false };
 									}
@@ -1478,10 +1489,8 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 									)
 								);
 							}
-
-							orders[i].filled = 1;
-							orders[i].dateFilled = new Date();
-
+							orders[buy.orderNo-1].filled = 1;
+							orders[buy.orderNo-1].dateFilled = new Date();
 							await updateDealTracker({
 								deal_id: dealId,
 								price: price,
@@ -1497,6 +1506,48 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 									orders: orders,
 								}
 							);
+
+							if(buy.orderNo+Number(config.dcaActiveMaxOrder) == orders.length){
+								let result="";
+								let msg="";
+								let success="";
+								for( let i= buy.orderNo; i < orders.length; i++ ){
+									result = await openWatchDog(
+										[{ DealID: dealId, OrderID: orders[i].OrderID, orderNo: orders[i].orderNo }],
+										pair,
+										exchange,
+									);
+									
+									if (result.success) {
+										
+										success = true;
+										msg = "BUY SUCCESS";
+										
+										orders[orders[i].orderNo-1].filled = 1;
+										orders[orders[i].orderNo-1].dateFilled = new Date();
+
+										await updateDealTracker({
+											deal_id: dealId,
+											price: price,
+											config: config,
+											orders: orders,
+										});
+		
+										await Deals.updateOne(
+											{
+												dealId: dealId,
+											},
+											{
+												orders: orders,
+											}
+										);
+		
+										Common.logger(msg);
+									}
+								}
+							}
+
+							
 						} else if (
 							price >= parseFloat(currentOrder.target) ||
 							dealTracker[dealId]["update"]["deal_cancel"] ||
@@ -1520,41 +1571,6 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 								let canceled = false;
 								let panicSell = false;
 								let sellSuccess = true;
-
-								// try {
-								//   sellErrorCount =
-								//     dealTracker[dealId]["update"]["deal_sell_error"]["count"];
-
-								//   addFee = 0.005 * sellErrorCount;
-								// } catch (e) {}
-
-								// if (addFee == undefined || addFee == null) {
-								//   addFee = 0;
-								// }
-
-								// if (addFee > 0) {
-								//   if (shareData.appData.verboseLog) {
-								//     Common.logger(
-								//       "Applying additional exchange fee of " +
-								//         addFee +
-								//         "% to reduce sell quantity for deal " +
-								//         dealId +
-								//         ". Attempt: " +
-								//         sellErrorCount +
-								//         "/" +
-								//         maxSellErrorCount
-								//     );
-								//   }
-								// }
-
-								// const feeData = await calculateExchangeFees(
-								//   pair,
-								//   price,
-								//   exchange,
-								//   config,
-								//   currentOrder,
-								//   addFee
-								// );
 
 								try {
 
@@ -1718,6 +1734,7 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 
 						break;
 					}
+				   
 				}
 
 				//if (ordersFilledTotal >= config.dcaMaxOrder) {
@@ -1737,12 +1754,12 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 					//await Common.delay(2000);
 				}
 			}
-
 			// Delay before following again
 			await Common.delay(2000);
 
 			return { success: success, finished: finished };
 		} else {
+
 			if (!followFinished) {
 				if (shareData.appData.verboseLog) {
 					Common.logger("No deal ID found for " + config.pair);
@@ -1750,6 +1767,7 @@ const dcaFollow = async (configDataObj, exchange, dealId) => {
 			}
 		}
 	} catch (e) {
+		
 		success = false;
 
 		Common.logger(JSON.stringify(e));
@@ -1957,25 +1975,21 @@ const getBalance = async (exchange, symbol) => {
 };
 
 // Fetch order status
-async function openWatchDog(orderId, price, pair, exchange) {
-	try {
-		const delay = 100; // 5 seconds
-		while (true) {
-			let inc = 0;
+let checkwatchdog=false;
+let watchdog_orderid=[];
 
-			const order = await exchange.fetchOrder(orderId, pair);
-			// console.log(`Order Status ${inc} for Order ID ${orderId} & for the pair ${pair} at${price}: ${order.status}`);
+let uniqueList = [];
 
-			// Check if the order is closed or filled
-			if (order.status === "closed" || order.status === "filled") {
-				return { success: true, order: order };
-			}
-			await new Promise((resolve) => setTimeout(resolve, delay));
-		}
-	} catch (error) {
-		console.error("Error tracking order status:", error.message);
-	}
+function addToUniqueList(orderId, dealId, pair, exchange) {
+    const existingItem = uniqueList.find(item => item.dealId === dealId);
+
+    if (!existingItem) {
+        uniqueList.push({ orderId, dealId, pair, exchange });
+    }
 }
+
+
+
 
 // BuyOrder function for market orders
 const buyOrder = async (exchange, dealId, pair, qty, price) => {
@@ -2011,45 +2025,71 @@ const buyOrder = async (exchange, dealId, pair, qty, price) => {
 	return dataObj;
 };
 
-// buyLimitOrder function for market orders
-const buyLimitOrder = async (exchange, dealId, pair, qty, price) => {
+// Fetch transactions status
+async function openWatchDog(orderDetails, pair, exchange) {
+    try {
+        const delay = 1000; // 1 second
+        const uniqueList = [];
+
+        for (const orderDetail of orderDetails) {
+            addToUniqueList(orderDetail.OrderID, orderDetail.DealID, pair, exchange);
+        }
+		
+        while (true) {
+            for (const orderDetail of orderDetails) {
+                const order = await exchange.fetchOrder(orderDetail.OrderID, pair);
+             
+                // console.log(`Order Status for Order ID ${orderDetail.OrderID} & for the pair ${pair}: ${order.status}`);
+
+                // Check if the order is closed or filled canceled
+                if (order.status === "closed" || order.status === "filled" || order.status === "canceled") {
+                    return { success: true, order: order,orderNo:orderDetail.orderNo};
+                }
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+    } catch (error) {
+        console.error("Error tracking order status:", error.message);
+    }
+}
+
+
+const buyLimitOrder = async (exchange, dealId, pair, qty, price ,orderNo,OrderID) => {
 	let msg;
 	let order;
 	let isErr;
 	let success;
+	let result;
 
 	try {
-		order = await exchange.createOrder(pair, "limit", "buy", qty, price);
-		// console.log("order is done ",order);
-		
-		if (order.status === "open" || order.status === "OPEN" || order.status === undefined ) {
-			let result = await openWatchDog(
-				order.id,
-				order.price,
-				order.symbol,
-				exchange
-			);
+		checkwatchdog=false;
+		result = await openWatchDog(
+			[{ DealID: dealId, OrderID: OrderID, orderNo: orderNo }],
+			pair,
+			exchange,
+		);
 
-			if (result.success) {
-				success = true;
-				msg = "BUY SUCCESS";
+		if (result.success) {
+			success = true;
+			msg = "BUY SUCCESS";
+			
+			const dataObj = {
+				date: new Date(),
+				success: success,
+				data: result.order,
+				error: isErr,
+				message: msg,
+				deal_id: dealId,
+				pair: pair,
+				quantity: qty,
+				price: price,
+				orderNo:result.orderNo
+			};
 
-				const dataObj = {
-					date: new Date(),
-					success: success,
-					data: result.order,
-					error: isErr,
-					message: msg,
-					deal_id: dealId,
-					pair: pair,
-					quantity: qty,
-					price: price,
-				};
+			Common.logger(dataObj);
 
-				Common.logger(dataObj);
-
-				return dataObj;
-			}
+			return dataObj;
 		}
 	} catch (e) {
 		isErr = e;
@@ -2058,6 +2098,7 @@ const buyLimitOrder = async (exchange, dealId, pair, qty, price) => {
 		msg = "BUY ERROR: " + e.name + " " + e.message;
 	}
 };
+
 
 const sellOrder = async (exchange, dealId, pair, qty, price) => {
 	let msg;
@@ -3389,10 +3430,22 @@ async function stopDeal(dealId) {
 	return res;
 }
 
+
+// function getOrderIdByDealId(dealIdToCheck) {
+//     const result = dataArray.find(item => item.dealId === dealIdToCheck);
+//     return result ? result.orderId : null;
+// }
+
+
+
 async function cancelDeal(dealId) {
 	let updateKey = "deal_cancel";
 	let msgErr = "Deal cancel timeout";
-
+	const foundItem = uniqueList.find(item => item.dealId === dealId);
+	if(foundItem != undefined){
+		const exchange1 =await foundItem.exchange
+		const result = await exchange1.cancelOrder(foundItem.orderId,foundItem.pair)
+	}
 	const res = await processDealTracker(dealId, msgErr, updateKey, true);
 
 	return res;

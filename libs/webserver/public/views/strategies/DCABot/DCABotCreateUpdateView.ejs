@@ -498,13 +498,12 @@
 
 			let regEx = /[^0-9\.]/g;
 
-			if (id.toLowerCase() == 'dealmax' || id.toLowerCase() == 'dealcooldown' || id.toLowerCase() == 'pairmax' || id.toLowerCase() == 'dcamaxorder') {
+			if (id.toLowerCase() == 'dealmax' || id.toLowerCase() == 'dealcooldown' || id.toLowerCase() == 'pairmax' || id.toLowerCase() == 'dcamaxorder' ||id.toLowerCase() == "dcaActiveMaxOrder") {
 
 				regEx = /[^0-9]/g;
 			}
 
 			if (charCode == 46 && (val.split('.').length - 1) > 0) {
-
 				return false;
 			}
 
@@ -738,6 +737,13 @@
 				</span></span>
 
 				</td> <td><input id="dcaMaxOrder" name="dcaMaxOrder" value="<%- botData.dcaMaxOrder %>" class="form-field"></td></tr>
+				<tr><td>Max Active Safety Orders: 
+
+					<span class="toolTip">?<span class="toolTipText">
+					This is the total number of DCA Active (safety) orders the bot is allowed to use per deal.
+					</span></span>
+	
+				</td> <td><input id="dcaActiveMaxOrder" name="dcaActiveMaxOrder" value="<%- botData.dcaActiveMaxOrder %>" class="form-field"></td></tr>
 				<tr><td>Safety Order Price Deviation: 
 
 				<span class="toolTip">?<span class="toolTipText">

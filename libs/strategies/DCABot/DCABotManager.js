@@ -662,7 +662,6 @@ async function apiPanicSellDeal(req, res) {
 
 	if (data && data.length > 0) {
 		let dealData = await removeDbKeys(JSON.parse(JSON.stringify(data[0])));
-
 		const status = dealData["status"];
 
 		if (status != 0) {
@@ -1369,7 +1368,7 @@ async function calculateOrders(body) {
 	botData.firstOrderAmount = body.firstOrderAmount;
 	botData.dcaOrderAmount = body.dcaOrderAmount;
 	botData.dcaMaxOrder = body.dcaMaxOrder;
-
+	botData.dcaActiveMaxOrder= body.dcaActiveMaxOrder;
 	botData.firstOrderType = body.firstOrderType ;
 	botData.dcaOrderSizeMultiplier = body.dcaOrderSizeMultiplier;
 	botData.dcaOrderStartDistance = body.dcaOrderStepPercent;
